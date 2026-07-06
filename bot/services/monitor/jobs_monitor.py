@@ -56,6 +56,7 @@ SOURCE_LABELS = {
 class JobsMonitor:
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self.client = client or httpx.AsyncClient(timeout=20, follow_redirects=True)
+        self.last_errors: list[str] = []
         self.providers = {
             "linkedin": LinkedInJobsProvider(self.client),
             "indeed": IndeedJobsProvider(self.client),
@@ -66,6 +67,7 @@ class JobsMonitor:
         config = self._normalize_filters(filters)
         selected_sources = config.get("sources") or list(settings.jobs_default_sources)
         items: list[MonitorItem] = []
+        self.last_errors = []
         provider_filters: JobProviderFilters = {
             "areas": config.get("areas", []),
             "levels": [],
@@ -79,9 +81,10 @@ class JobsMonitor:
             try:
                 jobs = await provider.fetch(provider_filters)
                 items.extend(self._to_monitor_item(job, config) for job in jobs if self._matches(job, config))
-            except Exception:
-                logger.exception("Falha ao buscar vagas no provider %s", source)
-                raise
+            except Exception as exc:
+                detail = f"{source}: {type(exc).__name__}: {str(exc)[:180]}"
+                self.last_errors.append(detail)
+                logger.exception("Falha ao buscar vagas no provider %s; continuando com as outras fontes", source)
         return items
 
     def _normalize_filters(self, filters: list[str] | dict[str, Any]) -> dict[str, list[str]]:

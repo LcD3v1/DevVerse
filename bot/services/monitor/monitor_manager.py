@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
@@ -26,6 +26,7 @@ class MonitorRunStats:
     duplicates: int = 0
     errors: int = 0
     missing_channel: bool = False
+    error_details: list[str] = field(default_factory=list)
 
 
 class MonitorManager:
@@ -76,10 +77,12 @@ class MonitorManager:
                 stats.duplicates += result.duplicates
                 stats.errors += result.errors
                 stats.missing_channel = stats.missing_channel or result.missing_channel
-                await self._mark_checked(row["id"], result_count=result.found)
+                stats.error_details.extend(result.error_details)
+                await self._mark_checked(row["id"], error=self._format_error_details(result.error_details), result_count=result.found)
                 await self._record_monitor_log(row["type"], result.found, result.errors)
             except Exception as exc:
                 stats.errors += 1
+                stats.error_details.append(str(exc)[:180])
                 logger.exception("Erro na execucao manual do monitor %s", row["id"])
                 await self._mark_checked(row["id"], str(exc)[:500], 0)
                 await self._record_monitor_log(row["type"], 0, 1)
@@ -90,7 +93,7 @@ class MonitorManager:
         for attempt in range(1, 4):
             try:
                 result = await self._run_monitor(row)
-                await self._mark_checked(row["id"], result_count=result.found)
+                await self._mark_checked(row["id"], error=self._format_error_details(result.error_details), result_count=result.found)
                 await self._record_monitor_log(row["type"], result.found, result.errors)
                 return
             except Exception as exc:
@@ -103,8 +106,10 @@ class MonitorManager:
     async def _run_monitor(self, row) -> MonitorRunStats:
         monitor_type = row["type"]
         filters = self._load_filters(row["filters"])
+        provider_error_details: list[str] = []
         if monitor_type == "jobs":
             items = await self.jobs.fetch(filters)
+            provider_error_details = list(self.jobs.last_errors)
         elif monitor_type == "hackathons":
             items = await self.hackathons.fetch(filters)
         elif monitor_type in {"youtube", "instagram"}:
@@ -114,7 +119,7 @@ class MonitorManager:
             return MonitorRunStats()
         sent = 0
         duplicates = 0
-        errors = 0
+        errors = len(provider_error_details)
         missing_channel = False
         for item in items[:10]:
             await self._record_item_log(monitor_type, item, row["channel_id"], "found")
@@ -133,7 +138,15 @@ class MonitorManager:
                 errors += 1
                 await self._record_item_log(monitor_type, item, row["channel_id"], "error")
         logger.info("Monitor %s encontrou %s item(ns), enviados %s", row["id"], len(items), sent)
-        return MonitorRunStats(found=len(items), new=sent + errors, sent=sent, duplicates=duplicates, errors=errors, missing_channel=missing_channel)
+        return MonitorRunStats(
+            found=len(items),
+            new=sent + (errors - len(provider_error_details)),
+            sent=sent,
+            duplicates=duplicates,
+            errors=errors,
+            missing_channel=missing_channel,
+            error_details=provider_error_details,
+        )
 
     def _load_filters(self, raw: str):
         if not raw:
@@ -149,6 +162,9 @@ class MonitorManager:
             "UPDATE monitors SET last_check = ?, last_error = ?, last_result_count = ? WHERE id = ?",
             (datetime.now(timezone.utc).isoformat(), error, result_count, monitor_id),
         )
+
+    def _format_error_details(self, details: list[str]) -> str:
+        return "\n".join(details)[:500]
 
     async def _record_monitor_log(self, monitor_type: str, items_found: int, errors: int) -> None:
         await self.bot.db.execute(

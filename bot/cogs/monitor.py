@@ -221,6 +221,10 @@ class MonitorCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         stats = await self.manager.run_now(interaction.guild.id, monitor_type)
         channel_warning = "\n\n\u26a0\ufe0f Canal de destino nao configurado." if stats.missing_channel else ""
+        error_details = ""
+        if stats.error_details:
+            details = "\n".join(f"- {detail}" for detail in stats.error_details[:3])
+            error_details = f"\n\nDetalhes:\n{details}"
         found_label = "Encontradas" if monitor_type == "jobs" else "Encontrados"
         item_label = "novas vagas" if monitor_type == "jobs" else "itens"
         await interaction.followup.send(
@@ -235,7 +239,8 @@ class MonitorCog(commands.Cog):
                         f"Erros:\n{stats.errors}",
                     ]
                 )
-                + channel_warning,
+                + channel_warning
+                + error_details,
             ),
             ephemeral=True,
         )
