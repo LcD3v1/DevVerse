@@ -16,6 +16,7 @@ Ele foi pensado para um grupo pequeno estudar programação, organizar projetos,
 - `/resource` e `/roadmap`.
 - Moderação: `/warn`, `/warnings`, `/clear`, `/timeout`, `/kick`, `/ban`.
 - Módulo opcional GitHub com `/github_link`.
+- DevVerse Monitor: alertas automaticos de vagas, hackathons, YouTube e Instagram via feed configuravel.
 
 ## Requisitos
 
@@ -49,6 +50,11 @@ DATABASE_PATH=data/database.sqlite3
 OWNER_IDS=
 ENABLE_GITHUB=false
 GITHUB_WEBHOOK_SECRET=
+MONITOR_ENABLED=true
+MONITOR_INTERVAL_MINUTES=5
+JOBS_SOURCE_URLS=https://remoteok.com/api
+HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
+INSTAGRAM_RSS_TEMPLATE=
 ```
 
 ## Criar o bot no Discord
@@ -130,6 +136,61 @@ No Discord, use:
 
 Esse comando cria a estrutura do servidor e registra os itens criados na tabela `created_items`.
 
+## DevVerse Monitor
+
+O DevVerse Monitor roda em segundo plano e envia notificacoes automaticas nos canais configurados. Ele evita duplicidade pelo link do conteudo e salva historico no SQLite nas tabelas `monitors`, `notifications`, `jobs`, `hackathons` e `social_posts`.
+
+Configurar vagas:
+
+```text
+/jobs setup canal:#vagas areas:backend,python,devops frequencia_minutos:60
+```
+
+As areas suportadas incluem frontend, backend, full stack, mobile, data science, machine learning, artificial intelligence, cybersecurity, devops, cloud e blockchain.
+
+Configurar hackathons:
+
+```text
+/hackathon setup canal:#hackathons categorias:ai,web3 frequencia_minutos:720
+```
+
+Monitorar YouTube:
+
+```text
+/monitor youtube adicionar canal_youtube:@canal canal:#conteudo frequencia_minutos:120
+```
+
+Tambem funciona com URL do canal, ID iniciado por `UC...` ou URL direta do feed RSS.
+
+Monitorar Instagram:
+
+```text
+/monitor instagram adicionar perfil:@perfil canal:#conteudo frequencia_minutos:120
+```
+
+O Instagram nao fornece feed publico oficial sem credenciais. Para ativar a busca, configure um template RSS externo no `.env`, por exemplo:
+
+```env
+INSTAGRAM_RSS_TEMPLATE=https://seu-servico-rss.example/{username}
+```
+
+Administracao:
+
+```text
+/monitor status
+/monitor remove monitor_id:1
+```
+
+As fontes podem ser trocadas por `.env`:
+
+```env
+JOBS_SOURCE_URLS=https://remoteok.com/api
+HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
+MONITOR_INTERVAL_MINUTES=5
+```
+
+Mais detalhes em `docs/MONITOR.md`.
+
 ## Rodar dashboard e backend
 
 Em um terminal, suba a API FastAPI:
@@ -194,6 +255,8 @@ Também é possível escrever direto no canal `🤖・ai-assistant`.
 ```text
 bot/
   cogs/
+  services/
+    monitor/
   views/
   config.py
   database.py

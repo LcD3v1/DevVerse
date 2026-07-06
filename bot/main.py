@@ -23,6 +23,7 @@ COGS = [
     "bot.cogs.resources",
     "bot.cogs.roadmap",
     "bot.cogs.github",
+    "bot.cogs.monitor",
 ]
 
 

@@ -126,6 +126,51 @@ class Database:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (guild_id, user_id, repo_url)
             );
+            CREATE TABLE IF NOT EXISTS monitors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                channel_id INTEGER NOT NULL,
+                filters TEXT NOT NULL DEFAULT '',
+                frequency_minutes INTEGER NOT NULL DEFAULT 60,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_check TEXT,
+                last_error TEXT,
+                UNIQUE(guild_id, type, source)
+            );
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(type, url)
+            );
+            CREATE TABLE IF NOT EXISTS jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                company TEXT NOT NULL DEFAULT '',
+                url TEXT NOT NULL,
+                date_found TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(url)
+            );
+            CREATE TABLE IF NOT EXISTS hackathons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                date_found TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(url)
+            );
+            CREATE TABLE IF NOT EXISTS social_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                creator TEXT NOT NULL,
+                url TEXT NOT NULL,
+                date_found TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(platform, url)
+            );
             """
         )
         await self.conn.commit()

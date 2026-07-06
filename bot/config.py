@@ -20,6 +20,15 @@ def _int_or_none(value: str | None) -> int | None:
         return None
 
 
+def _int_or_default(value: str | None, default: int) -> int:
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 def _ids(value: str | None) -> set[int]:
     if not value:
         return set()
@@ -40,6 +49,11 @@ class Settings:
     owner_ids: set[int]
     enable_github: bool
     github_webhook_secret: str
+    monitor_enabled: bool
+    monitor_interval_minutes: int
+    jobs_source_urls: tuple[str, ...]
+    hackathon_source_urls: tuple[str, ...]
+    instagram_rss_template: str
 
 
 settings = Settings(
@@ -55,4 +69,17 @@ settings = Settings(
     owner_ids=_ids(os.getenv("OWNER_IDS")),
     enable_github=os.getenv("ENABLE_GITHUB", "false").lower() == "true",
     github_webhook_secret=os.getenv("GITHUB_WEBHOOK_SECRET", ""),
+    monitor_enabled=os.getenv("MONITOR_ENABLED", "true").lower() == "true",
+    monitor_interval_minutes=_int_or_default(os.getenv("MONITOR_INTERVAL_MINUTES"), 5),
+    jobs_source_urls=tuple(
+        part.strip()
+        for part in os.getenv("JOBS_SOURCE_URLS", "https://remoteok.com/api").split(",")
+        if part.strip()
+    ),
+    hackathon_source_urls=tuple(
+        part.strip()
+        for part in os.getenv("HACKATHON_SOURCE_URLS", "https://devpost.com/api/hackathons").split(",")
+        if part.strip()
+    ),
+    instagram_rss_template=os.getenv("INSTAGRAM_RSS_TEMPLATE", ""),
 )
