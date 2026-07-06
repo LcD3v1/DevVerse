@@ -107,6 +107,9 @@ ONBOARDING_GROUPS = {
     },
 }
 
+PRIMARY_ONBOARDING_GROUPS = ["level", "specialties", "languages"]
+EXTRA_ONBOARDING_GROUPS = ["frameworks", "systems", "goals"]
+
 
 def load_role_ids() -> dict[str, int]:
     if not ROLES_CONFIG_PATH.exists():
@@ -196,9 +199,10 @@ class ConfirmProfileButton(discord.ui.Button):
 
 
 class OnboardingView(discord.ui.View):
-    def __init__(self) -> None:
+    def __init__(self, groups: list[str] | None = None) -> None:
         super().__init__(timeout=None)
+        groups = groups or PRIMARY_ONBOARDING_GROUPS
         states: dict[int, OnboardingState] = {}
-        for group_key in ONBOARDING_GROUPS:
+        for group_key in groups:
             self.add_item(OnboardingSelect(group_key, states))
         self.add_item(ConfirmProfileButton(states))

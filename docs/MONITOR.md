@@ -20,7 +20,7 @@ MONITOR_INTERVAL_MINUTES=5
 JOBS_SOURCE_URLS=https://remoteok.com/api
 JOBS_DEFAULT_LOCATION=Worldwide
 HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
-INSTAGRAM_RSS_TEMPLATE=
+INSTAGRAM_RSS_TEMPLATE=https://rsshub.app/instagram/user/{username}
 ```
 
 `MONITOR_INTERVAL_MINUTES` controla a task base. Cada monitor tambem tem sua propria frequencia configurada pelo comando.
@@ -29,7 +29,7 @@ INSTAGRAM_RSS_TEMPLATE=
 
 `JOBS_DEFAULT_LOCATION` e usado nas buscas de LinkedIn e Indeed.
 
-`INSTAGRAM_RSS_TEMPLATE` deve conter `{username}`. Sem essa variavel, perfis do Instagram podem ser cadastrados, mas a checagem nao envia novos posts.
+`INSTAGRAM_RSS_TEMPLATE` deve conter `{username}`. Por padrao, o bot usa `https://rsshub.app/instagram/user/{username}`. Se a instancia publica do RSSHub limitar requisicoes, configure uma instancia propria.
 
 ## Comandos
 

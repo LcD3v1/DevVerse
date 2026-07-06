@@ -7,14 +7,15 @@ from discord.ext import commands
 from bot.permissions import admin_check
 from bot.templates import ROLE_PANEL_GROUPS
 from bot.utils import make_embed
-from bot.views.onboarding import ONBOARDING_GROUPS, OnboardingView, load_role_ids
+from bot.views.onboarding import EXTRA_ONBOARDING_GROUPS, ONBOARDING_GROUPS, PRIMARY_ONBOARDING_GROUPS, OnboardingView, load_role_ids
 from bot.views.role_menu import RolePanelView
 
 
 class RolesCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.bot.add_view(OnboardingView())
+        self.bot.add_view(OnboardingView(PRIMARY_ONBOARDING_GROUPS))
+        self.bot.add_view(OnboardingView(EXTRA_ONBOARDING_GROUPS))
 
     @app_commands.command(name="rolepanel", description="Cria o painel de autoatribuição de cargos.")
     @admin_check()
@@ -39,7 +40,8 @@ class RolesCog(commands.Cog):
             return
         await self._ensure_area_channels(interaction.guild)
         channel = await self._ensure_welcome_channel(interaction.guild)
-        await channel.send(embed=self._onboarding_embed(), view=OnboardingView())
+        await channel.send(embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS))
+        await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS))
         await interaction.followup.send(embed=make_embed("Sistema de cargos pronto", f"Painel enviado em {channel.mention}."), ephemeral=True)
 
     @commands.Cog.listener()
@@ -48,7 +50,8 @@ class RolesCog(commands.Cog):
         if not channel:
             return
         try:
-            await channel.send(content=member.mention, embed=self._onboarding_embed(), view=OnboardingView(), delete_after=3600)
+            await channel.send(content=member.mention, embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS), delete_after=3600)
+            await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS), delete_after=3600)
         except discord.HTTPException:
             return
 
@@ -114,8 +117,21 @@ class RolesCog(commands.Cog):
                     "\U0001f4d9 Avancado",
                     "\U0001f3c6 Expert",
                     "",
-                    "Escolha especialidades, linguagens, frameworks, sistemas e objetivos.",
-                    "Depois clique em Confirmar.",
+                    "Escolha especialidades e linguagens.",
+                    "Depois clique em Confirmar neste painel.",
+                ]
+            ),
+        )
+
+    def _onboarding_extra_embed(self) -> discord.Embed:
+        return make_embed(
+            "Preferencias DevVerse",
+            "\n".join(
+                [
+                    "Escolha frameworks, sistemas e objetivos.",
+                    "Depois clique em Confirmar neste painel.",
+                    "",
+                    "Essas escolhas ajudam o DevVerse a direcionar canais, recursos e futuras recomendacoes por IA.",
                 ]
             ),
         )

@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from bot.config import settings
 from bot.services.monitor.models import MonitorItem
 from bot.services.monitor.providers.base import JobProviderFilters, JobProviderResult
 from bot.services.monitor.providers.existing_provider import ExistingJobsProvider
@@ -63,7 +64,7 @@ class JobsMonitor:
 
     async def fetch(self, filters: list[str] | dict[str, Any]) -> list[MonitorItem]:
         config = self._normalize_filters(filters)
-        selected_sources = config.get("sources") or ["linkedin", "indeed", "existing"]
+        selected_sources = config.get("sources") or list(settings.jobs_default_sources)
         items: list[MonitorItem] = []
         provider_filters: JobProviderFilters = {
             "areas": config.get("areas", []),
@@ -92,7 +93,7 @@ class JobsMonitor:
                 "models": [],
             }
         return {
-            "sources": ["linkedin", "indeed", "existing"],
+            "sources": list(settings.jobs_default_sources),
             "areas": list(TECH_AREAS),
             "levels": [],
             "models": [],

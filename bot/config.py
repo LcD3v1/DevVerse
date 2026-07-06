@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
+DEFAULT_INSTAGRAM_RSS_TEMPLATE = "https://rsshub.app/instagram/user/{username}"
 
 
 def _int_or_none(value: str | None) -> int | None:
@@ -51,6 +52,7 @@ class Settings:
     github_webhook_secret: str
     monitor_enabled: bool
     monitor_interval_minutes: int
+    jobs_default_sources: tuple[str, ...]
     jobs_source_urls: tuple[str, ...]
     jobs_default_location: str
     hackathon_source_urls: tuple[str, ...]
@@ -72,6 +74,11 @@ settings = Settings(
     github_webhook_secret=os.getenv("GITHUB_WEBHOOK_SECRET", ""),
     monitor_enabled=os.getenv("MONITOR_ENABLED", "true").lower() == "true",
     monitor_interval_minutes=_int_or_default(os.getenv("MONITOR_INTERVAL_MINUTES"), 5),
+    jobs_default_sources=tuple(
+        part.strip().lower()
+        for part in os.getenv("JOBS_DEFAULT_SOURCES", "linkedin,indeed,existing").split(",")
+        if part.strip()
+    ),
     jobs_source_urls=tuple(
         part.strip()
         for part in os.getenv("JOBS_SOURCE_URLS", "https://remoteok.com/api").split(",")
@@ -83,5 +90,5 @@ settings = Settings(
         for part in os.getenv("HACKATHON_SOURCE_URLS", "https://devpost.com/api/hackathons").split(",")
         if part.strip()
     ),
-    instagram_rss_template=os.getenv("INSTAGRAM_RSS_TEMPLATE", ""),
+    instagram_rss_template=os.getenv("INSTAGRAM_RSS_TEMPLATE", DEFAULT_INSTAGRAM_RSS_TEMPLATE) or DEFAULT_INSTAGRAM_RSS_TEMPLATE,
 )

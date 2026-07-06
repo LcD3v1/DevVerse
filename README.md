@@ -52,10 +52,11 @@ ENABLE_GITHUB=false
 GITHUB_WEBHOOK_SECRET=
 MONITOR_ENABLED=true
 MONITOR_INTERVAL_MINUTES=5
+JOBS_DEFAULT_SOURCES=linkedin,indeed,existing
 JOBS_SOURCE_URLS=https://remoteok.com/api
 JOBS_DEFAULT_LOCATION=Worldwide
 HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
-INSTAGRAM_RSS_TEMPLATE=
+INSTAGRAM_RSS_TEMPLATE=https://rsshub.app/instagram/user/{username}
 ```
 
 ## Criar o bot no Discord
@@ -137,6 +138,36 @@ No Discord, use:
 
 Esse comando cria a estrutura do servidor e registra os itens criados na tabela `created_items`.
 
+## Hospedar na ShardCloud
+
+Configure o start como:
+
+```text
+python run.py
+```
+
+O repositório também inclui `Procfile` com `worker: python run.py` e `main.py` na raiz para hosts que detectam automaticamente o arquivo principal.
+
+No painel da hospedagem, configure pelo menos:
+
+```env
+DISCORD_TOKEN=seu_token
+GUILD_ID=id_do_servidor
+AI_PROVIDER=gateway
+DATABASE_PATH=data/database.sqlite3
+MONITOR_ENABLED=true
+MONITOR_INTERVAL_MINUTES=5
+```
+
+No Discord Developer Portal, deixe ativados:
+
+```text
+Server Members Intent
+Message Content Intent
+```
+
+Se o log mostrar `Defina DISCORD_TOKEN`, a variável não foi configurada na hospedagem. Se o processo iniciar e cair durante o carregamento, veja o log do deploy para identificar o cog que falhou.
+
 ## DevVerse Monitor
 
 O DevVerse Monitor roda em segundo plano e envia notificacoes automaticas nos canais configurados. Ele evita duplicidade pelo link do conteudo e salva historico no SQLite nas tabelas `monitors`, `notifications`, `jobs`, `hackathons` e `social_posts`.
@@ -170,11 +201,13 @@ Monitorar Instagram:
 /monitor instagram adicionar perfil:@perfil canal:#conteudo frequencia_minutos:120
 ```
 
-O Instagram nao fornece feed publico oficial sem credenciais. Para ativar a busca, configure um template RSS externo no `.env`, por exemplo:
+O Instagram nao fornece feed publico oficial sem credenciais. Por padrao, o bot usa RSSHub:
 
 ```env
-INSTAGRAM_RSS_TEMPLATE=https://seu-servico-rss.example/{username}
+INSTAGRAM_RSS_TEMPLATE=https://rsshub.app/instagram/user/{username}
 ```
+
+Se a instancia publica do RSSHub limitar ou bloquear requisicoes, use uma instancia propria e troque apenas essa variavel.
 
 Administracao:
 
