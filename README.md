@@ -40,7 +40,8 @@ Edite o `.env`:
 DISCORD_TOKEN=seu_token
 GUILD_ID=id_do_servidor
 COMMAND_PREFIX=!
-AI_PROVIDER=ollama
+AI_PROVIDER=gateway
+AI_GATEWAY_URL=
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=qwen2.5-coder
 AI_CHANNEL_NAME=🤖・ai-assistant
@@ -85,6 +86,35 @@ Depois altere no `.env`:
 ```env
 OLLAMA_MODEL=llama3.1
 ```
+
+## IA com bot hospedado
+
+Se o bot estiver em host/cloud, ele nao consegue acessar `http://localhost:11434` do seu PC. Nesse caso, `localhost` aponta para o proprio servidor do bot, nao para a sua maquina.
+
+Use uma destas opcoes:
+
+```env
+AI_PROVIDER=gateway
+AI_GATEWAY_URL=https://sua-url-publica/api/generate
+OLLAMA_MODEL=qwen2.5-coder
+```
+
+Enquanto `AI_GATEWAY_URL` estiver vazio, o bot nao quebra: ele responde com a mensagem amigavel `IA local offline (Ollama rodando apenas no PC do dev)`.
+
+Para desenvolvimento local, quando bot e Ollama rodam na mesma maquina:
+
+```env
+AI_PROVIDER=ollama_local
+OLLAMA_HOST=http://localhost:11434
+```
+
+Gateway opcional para rodar na maquina/VPS que tem Ollama:
+
+```bash
+ai_gateway\start-gateway.cmd
+```
+
+Esse gateway expõe `POST /api/generate` e repassa para o Ollama local da maquina onde ele estiver rodando.
 
 ## Rodar
 

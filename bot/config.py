@@ -32,6 +32,7 @@ class Settings:
     guild_id: int | None
     command_prefix: str
     ai_provider: str
+    ai_gateway_url: str
     ollama_host: str
     ollama_model: str
     ai_channel_name: str
@@ -46,6 +47,7 @@ settings = Settings(
     guild_id=_int_or_none(os.getenv("GUILD_ID")),
     command_prefix=os.getenv("COMMAND_PREFIX", "!"),
     ai_provider=os.getenv("AI_PROVIDER", "ollama"),
+    ai_gateway_url=os.getenv("AI_GATEWAY_URL", "").rstrip("/"),
     ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/"),
     ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5-coder"),
     ai_channel_name=os.getenv("AI_CHANNEL_NAME", "🤖・ai-assistant"),
