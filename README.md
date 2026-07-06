@@ -1,0 +1,151 @@
+# DevVerse Assistant
+
+Bot all-in-one para Discord feito em Python 3.11+, `discord.py` 2.x, slash commands, SQLite e IA local gratuita com Ollama.
+
+Ele foi pensado para um grupo pequeno estudar programação, organizar projetos, registrar progresso, usar Pomodoro, criar tarefas, revisar código com IA e preparar o servidor Discord inteiro com um comando.
+
+## Recursos
+
+- `/setup_devserver` cria cargos, categorias, canais, permissões e mensagens iniciais.
+- `/limpar_devserver` remove somente itens registrados como criados pelo bot.
+- `/rolepanel` cria menus de autoatribuição de cargos.
+- IA local com Ollama: `/ask`, `/explain_code`, `/debug_code`, `/review_code`, `/optimize_code`, `/generate_code`, `/quiz`, `/challenge`.
+- Canal `🤖・ai-assistant` responde automaticamente mensagens com IA.
+- `/checkin`, `/profile`, `/ranking`, `/pomodoro`.
+- `/task_create`, `/task_list`, `/task_done`, `/task_delete`.
+- `/resource` e `/roadmap`.
+- Moderação: `/warn`, `/warnings`, `/clear`, `/timeout`, `/kick`, `/ban`.
+- Módulo opcional GitHub com `/github_link`.
+
+## Requisitos
+
+- Python 3.11+
+- Discord bot criado no Discord Developer Portal
+- Ollama instalado localmente
+- Modelo local, por exemplo `qwen2.5-coder`
+
+## Instalação
+
+```bash
+cd devverse-assistant
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+```
+
+Edite o `.env`:
+
+```env
+DISCORD_TOKEN=seu_token
+GUILD_ID=id_do_servidor
+COMMAND_PREFIX=!
+AI_PROVIDER=ollama
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=qwen2.5-coder
+AI_CHANNEL_NAME=🤖・ai-assistant
+DATABASE_PATH=data/database.sqlite3
+OWNER_IDS=
+ENABLE_GITHUB=false
+GITHUB_WEBHOOK_SECRET=
+```
+
+## Criar o bot no Discord
+
+1. Acesse o Discord Developer Portal.
+2. Crie uma aplicação.
+3. Abra Bot > Add Bot.
+4. Copie o token para `DISCORD_TOKEN`.
+5. Ative `Server Members Intent` e `Message Content Intent`.
+6. Em OAuth2 > URL Generator, marque `bot` e `applications.commands`.
+7. Convide com permissão `Administrator` para o setup inicial.
+
+## Instalar Ollama
+
+Instale o Ollama e baixe o modelo:
+
+```bash
+ollama pull qwen2.5-coder
+```
+
+Se o serviço não estiver rodando:
+
+```bash
+ollama serve
+```
+
+Para trocar o modelo:
+
+```bash
+ollama pull llama3.1
+```
+
+Depois altere no `.env`:
+
+```env
+OLLAMA_MODEL=llama3.1
+```
+
+## Rodar
+
+```bash
+python run.py
+```
+
+No Discord, use:
+
+```text
+/setup_devserver
+```
+
+Esse comando cria a estrutura do servidor e registra os itens criados na tabela `created_items`.
+
+## Limpar estrutura
+
+```text
+/limpar_devserver
+```
+
+O bot pede confirmação e remove somente canais, categorias e cargos que ele mesmo registrou. Canais antigos ou criados manualmente não são removidos.
+
+## Comandos de IA
+
+```text
+/ask pergunta
+/explain_code linguagem codigo
+/debug_code linguagem codigo erro
+/review_code linguagem codigo
+/optimize_code linguagem codigo
+/generate_code linguagem descricao
+/quiz tema dificuldade
+/challenge linguagem dificuldade
+/roadmap area nivel
+```
+
+Também é possível escrever direto no canal `🤖・ai-assistant`.
+
+## Testar se está funcionando
+
+1. Rode `ollama serve`.
+2. Rode `python run.py`.
+3. Use `/ping`.
+4. Use `/setup_devserver`.
+5. Escreva uma pergunta no canal `🤖・ai-assistant`.
+6. Use `/checkin`, `/profile` e `/task_create`.
+
+## Estrutura
+
+```text
+bot/
+  cogs/
+  views/
+  config.py
+  database.py
+  templates.py
+  permissions.py
+  utils.py
+data/
+docs/
+run.py
+requirements.txt
+```
