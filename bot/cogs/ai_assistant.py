@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
-import aiohttp
 import discord
+import requests
 from discord import app_commands
 from discord.ext import commands
 
 from bot.config import settings
 from bot.templates import SYSTEM_PROMPT
-from bot.utils import make_embed, send_long, split_message
+from bot.utils import split_message
+
+
+DEVVERSE_AI_COLOR = discord.Color(0x6C5CE7)
+DEVVERSE_AI_ICON_URL = "https://i.imgur.com/placeholder.png"
 
 
 class AIAssistantCog(commands.Cog):
@@ -26,24 +31,26 @@ class AIAssistantCog(commands.Cog):
         return 0
 
     async def ask_ollama(self, prompt: str) -> str:
+        try:
+            content = await asyncio.to_thread(self._ask_ollama_sync, prompt)
+        except requests.Timeout:
+            return "O Ollama demorou para responder. Tente novamente ou use um prompt menor."
+        except requests.RequestException:
+            return "Não consegui falar com o Ollama. Confirme se ele está aberto com `ollama serve` e se o host no `.env` está correto."
+        except (KeyError, ValueError):
+            return "O Ollama respondeu em um formato inesperado. Verifique se o endpoint `/api/generate` está ativo."
+        return content[:5500] or "A IA não retornou conteúdo."
+
+    def _ask_ollama_sync(self, prompt: str) -> str:
+        url = f"{settings.ollama_host}/api/generate"
         payload = {
             "model": settings.ollama_model,
+            "prompt": f"{SYSTEM_PROMPT}\n\n{prompt[:8000]}",
             "stream": False,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt[:8000]},
-            ],
         }
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
-                async with session.post(f"{settings.ollama_host}/api/chat", json=payload) as response:
-                    if response.status >= 400:
-                        return f"Ollama respondeu com erro HTTP {response.status}. Verifique se o modelo `{settings.ollama_model}` está instalado."
-                    data = await response.json()
-        except (aiohttp.ClientError, TimeoutError):
-            return "Não consegui falar com o Ollama. Confirme se ele está aberto com `ollama serve` e se o host no `.env` está correto."
-        content = data.get("message", {}).get("content", "").strip()
-        return content[:5500] or "A IA não retornou conteúdo."
+        response = requests.post(url, json=payload, timeout=120)
+        response.raise_for_status()
+        return response.json()["response"].strip()
 
     async def _run_ai(self, interaction: discord.Interaction, command: str, prompt: str) -> None:
         if left := self._cooldown_left(interaction.user.id):
@@ -56,7 +63,36 @@ class AIAssistantCog(commands.Cog):
                 (interaction.guild.id, interaction.user.id, command, prompt[:1000]),
             )
         answer = await self.ask_ollama(prompt)
-        await send_long(interaction, answer, "DevVerse AI")
+        await self._send_ai_response(interaction, answer, prompt)
+
+    def _make_ai_embed(self, answer: str, question: str | None = None, continuation: bool = False) -> discord.Embed:
+        embed = discord.Embed(
+            title="🤖 DevVerse AI" if not continuation else "🤖 DevVerse AI · continuação",
+            description=f"```{answer[:3500]}```",
+            color=DEVVERSE_AI_COLOR,
+        )
+        embed.set_author(
+            name="AI Assistant",
+            icon_url=DEVVERSE_AI_ICON_URL,
+        )
+        if question and not continuation:
+            embed.add_field(
+                name="🧠 Prompt",
+                value=question[:1000],
+                inline=False,
+            )
+        embed.set_footer(text="Powered by Ollama • DevVerse System")
+        return embed
+
+    async def _send_ai_response(self, interaction: discord.Interaction, answer: str, question: str) -> None:
+        chunks = split_message(answer, limit=3400)
+        first = self._make_ai_embed(chunks[0], question)
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=first)
+        else:
+            await interaction.response.send_message(embed=first)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(embed=self._make_ai_embed(chunk, continuation=True))
 
     @app_commands.command(name="ask", description="Pergunta geral para a IA.")
     async def ask(self, interaction: discord.Interaction, pergunta: str) -> None:
@@ -106,8 +142,10 @@ class AIAssistantCog(commands.Cog):
                 (message.guild.id, message.author.id, "ai_channel", message.content[:1000]),
             )
             answer = await self.ask_ollama(message.content)
-        for chunk in split_message(answer):
-            await message.channel.send(embed=make_embed("DevVerse AI", chunk))
+        for index, chunk in enumerate(split_message(answer, limit=3400)):
+            await message.channel.send(
+                embed=self._make_ai_embed(chunk, message.content if index == 0 else None, continuation=index > 0)
+            )
 
     async def _maybe_add_message_xp(self, message: discord.Message) -> None:
         row = await self.bot.db.fetchone("SELECT last_message_xp FROM users WHERE guild_id = ? AND user_id = ?", (message.guild.id, message.author.id))

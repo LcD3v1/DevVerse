@@ -5,6 +5,10 @@ __pycache__/
 data/*.sqlite3
 data/*.sqlite3-*
 logs/
+dashboard/frontend/.next/
+dashboard/frontend/node_modules/
+dashboard/frontend/dev-server*.log
+dashboard/backend/*.log
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

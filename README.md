@@ -100,6 +100,32 @@ No Discord, use:
 
 Esse comando cria a estrutura do servidor e registra os itens criados na tabela `created_items`.
 
+## Rodar dashboard e backend
+
+Em um terminal, suba a API FastAPI:
+
+```bash
+dashboard\backend\start-backend.cmd
+```
+
+Em outro terminal, suba o dashboard web:
+
+```bash
+cd dashboard\frontend
+npm.cmd install
+npm.cmd run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+URLs locais:
+
+```text
+Dashboard: http://localhost:3000
+Backend:   http://127.0.0.1:8000
+Health:    http://127.0.0.1:8000/health
+```
+
+O dashboard le `/stats/server` do backend. Se a API estiver ligada, o botao no topo mostra `API online`; se nao estiver, a tela continua em modo demo.
+
 ## Limpar estrutura
 
 ```text
