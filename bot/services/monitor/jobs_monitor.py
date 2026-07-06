@@ -28,6 +28,7 @@ TECH_AREAS = {
     "devops": ("devops", "sre", "kubernetes", "docker", "ci/cd"),
     "cloud": ("cloud", "aws", "azure", "gcp"),
     "blockchain": ("blockchain", "web3", "solidity", "smart contract"),
+    "game development": ("game development", "game developer", "unity", "unreal", "gamedev"),
 }
 
 LEVELS = {
@@ -66,8 +67,8 @@ class JobsMonitor:
         items: list[MonitorItem] = []
         provider_filters: JobProviderFilters = {
             "areas": config.get("areas", []),
-            "levels": config.get("levels", []),
-            "models": config.get("models", []),
+            "levels": [],
+            "models": [],
         }
         for source in selected_sources:
             provider = self.providers.get(source)
@@ -86,13 +87,13 @@ class JobsMonitor:
         if isinstance(filters, dict):
             return {
                 "sources": self._normalize_sources(filters.get("sources", [])),
-                "areas": self._normalize_areas(filters.get("areas", [])),
-                "levels": self._normalize_levels(filters.get("levels", [])),
-                "models": self._normalize_models(filters.get("models", [])),
+                "areas": list(TECH_AREAS),
+                "levels": [],
+                "models": [],
             }
         return {
             "sources": ["linkedin", "indeed", "existing"],
-            "areas": self._normalize_areas(filters),
+            "areas": list(TECH_AREAS),
             "levels": [],
             "models": [],
         }
@@ -122,11 +123,7 @@ class JobsMonitor:
 
     def _matches(self, job: JobProviderResult, filters: dict[str, list[str]]) -> bool:
         text = self._search_text(job)
-        if filters.get("areas") and not self._matched_areas(text, filters["areas"]):
-            return False
-        if filters.get("levels") and not self._matches_map(text, filters["levels"], LEVELS):
-            return False
-        if filters.get("models") and not self._matches_map(text, filters["models"], MODELS):
+        if not self._matched_areas(text, filters.get("areas", list(TECH_AREAS))):
             return False
         return True
 

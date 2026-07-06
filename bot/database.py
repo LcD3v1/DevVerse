@@ -119,6 +119,14 @@ class Database:
                 reason TEXT NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS moderation_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                moderator_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                amount INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS github_links (
                 guild_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -177,6 +185,13 @@ class Database:
                 url TEXT NOT NULL,
                 date_found TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(platform, url)
+            );
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id INTEGER PRIMARY KEY,
+                role_type TEXT NOT NULL DEFAULT '',
+                area TEXT NOT NULL DEFAULT '',
+                level TEXT NOT NULL DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             """
         )

@@ -144,10 +144,11 @@ O DevVerse Monitor roda em segundo plano e envia notificacoes automaticas nos ca
 Configurar vagas:
 
 ```text
-/jobs setup canal:#vagas fontes:linkedin,indeed,existing areas:backend,ai engineer,cybersecurity niveis:junior,mid modelos:remote,hybrid frequencia_minutos:60
+/jobs setup canal:#vagas fontes:linkedin,indeed,existing frequencia_minutos:5
+/jobs interval minutos:15
 ```
 
-As fontes suportadas sao `linkedin`, `indeed` e `existing`. As areas suportadas incluem frontend, backend, full stack, mobile, data science, machine learning, ai engineer, cybersecurity, devops e cloud. Os niveis aceitos sao internship, entry level, junior, mid e senior. Os modelos aceitos sao remote, hybrid e on-site.
+As fontes suportadas sao `linkedin`, `indeed` e `existing`. O monitor de vagas nao limita por usuario: ele busca continuamente vagas de tecnologia em frontend, backend, full stack, mobile, data science, machine learning, artificial intelligence, cybersecurity, devops, cloud, blockchain e game development.
 
 Configurar hackathons:
 
@@ -179,8 +180,15 @@ Administracao:
 
 ```text
 /monitor status
+/monitor run jobs
+/monitor run hackathons
+/monitor run instagram
 /monitor remove monitor_id:1
 ```
+
+## Onboarding e cargos
+
+Use `/setup_roles` para criar os cargos de perfil, area e nivel, publicar o painel em `#👋・bem-vindo` e ativar a selecao por botoes. Quando alguem entrar no servidor, o bot envia o painel de boas-vindas no mesmo canal.
 
 As fontes podem ser trocadas por `.env`:
 

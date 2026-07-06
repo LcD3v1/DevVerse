@@ -36,7 +36,8 @@ INSTAGRAM_RSS_TEMPLATE=
 ### Vagas
 
 ```text
-/jobs setup canal:#vagas fontes:linkedin,indeed,existing areas:backend,ai engineer,cybersecurity niveis:junior,mid modelos:remote,hybrid frequencia_minutos:60
+/jobs setup canal:#vagas fontes:linkedin,indeed,existing frequencia_minutos:5
+/jobs interval minutos:15
 ```
 
 Fontes suportadas:
@@ -45,7 +46,7 @@ Fontes suportadas:
 - indeed
 - existing
 
-Areas suportadas:
+O monitor nao limita vagas por usuario. Ele sempre busca vagas relacionadas a tecnologia nas areas:
 
 - frontend
 - backend
@@ -57,26 +58,16 @@ Areas suportadas:
 - cybersecurity
 - devops
 - cloud
+- blockchain
+- game development
 
-Aliases aceitos incluem `ai`, `ia`, `ml`, `fullstack`, `front-end`, `back-end` e `security`.
+Execucao manual:
 
-Niveis suportados:
-
-- internship
-- entry level
-- junior
-- mid
-- senior
-
-Aliases aceitos incluem `estagio`, `estagiario`, `jr`, `pleno`, `sr` e `trainee`.
-
-Modelos suportados:
-
-- remote
-- hybrid
-- on-site
-
-Aliases aceitos incluem `remoto`, `hibrido`, `presencial`, `onsite` e `on site`.
+```text
+/monitor run jobs
+/monitor run hackathons
+/monitor run instagram
+```
 
 ### Hackathons
 

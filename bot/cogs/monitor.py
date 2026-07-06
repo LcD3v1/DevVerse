@@ -20,9 +20,10 @@ class JobsGroup(app_commands.Group):
     @app_commands.command(name="setup", description="Configura alertas automaticos de vagas.")
     @app_commands.choices(
         frequencia_minutos=[
+            app_commands.Choice(name="5 minutos", value=5),
+            app_commands.Choice(name="15 minutos", value=15),
             app_commands.Choice(name="30 minutos", value=30),
             app_commands.Choice(name="1 hora", value=60),
-            app_commands.Choice(name="3 horas", value=180),
         ]
     )
     @admin_check()
@@ -31,12 +32,22 @@ class JobsGroup(app_commands.Group):
         interaction: discord.Interaction,
         canal: discord.TextChannel,
         fontes: str = "linkedin,indeed,existing",
-        areas: str = "",
-        niveis: str = "",
-        modelos: str = "",
-        frequencia_minutos: int = 60,
+        frequencia_minutos: int = 5,
     ) -> None:
-        await self.cog.upsert_jobs_monitor(interaction, canal.id, fontes, areas, niveis, modelos, frequencia_minutos)
+        await self.cog.upsert_jobs_monitor(interaction, canal.id, fontes, frequencia_minutos)
+
+    @app_commands.command(name="interval", description="Altera o intervalo do monitor de vagas.")
+    @app_commands.choices(
+        minutos=[
+            app_commands.Choice(name="5 minutos", value=5),
+            app_commands.Choice(name="15 minutos", value=15),
+            app_commands.Choice(name="30 minutos", value=30),
+            app_commands.Choice(name="1 hora", value=60),
+        ]
+    )
+    @admin_check()
+    async def interval(self, interaction: discord.Interaction, minutos: int) -> None:
+        await self.cog.update_jobs_interval(interaction, minutos)
 
 
 class HackathonGroup(app_commands.Group):
@@ -57,6 +68,7 @@ class MonitorGroup(app_commands.Group):
 
     instagram = app_commands.Group(name="instagram", description="Monitora perfis do Instagram.")
     youtube = app_commands.Group(name="youtube", description="Monitora canais do YouTube.")
+    run_group = app_commands.Group(name="run", description="Executa monitores imediatamente.")
 
     @instagram.command(name="adicionar", description="Adiciona um perfil do Instagram ao monitoramento.")
     @admin_check()
@@ -77,6 +89,21 @@ class MonitorGroup(app_commands.Group):
     @admin_check()
     async def remove(self, interaction: discord.Interaction, monitor_id: int) -> None:
         await self.cog.remove(interaction, monitor_id)
+
+    @run_group.command(name="jobs", description="Executa o monitor de vagas agora.")
+    @admin_check()
+    async def run_jobs(self, interaction: discord.Interaction) -> None:
+        await self.cog.run_monitor_now(interaction, "jobs", "\U0001f680 Executando monitor de vagas...")
+
+    @run_group.command(name="hackathons", description="Executa o monitor de hackathons agora.")
+    @admin_check()
+    async def run_hackathons(self, interaction: discord.Interaction) -> None:
+        await self.cog.run_monitor_now(interaction, "hackathons", "\U0001f3c6 Executando monitor de hackathons...")
+
+    @run_group.command(name="instagram", description="Executa o monitor de Instagram agora.")
+    @admin_check()
+    async def run_instagram(self, interaction: discord.Interaction) -> None:
+        await self.cog.run_monitor_now(interaction, "instagram", "\U0001f3a5 Executando monitor de Instagram...")
 
 
 class MonitorCog(commands.Cog):
@@ -134,20 +161,17 @@ class MonitorCog(commands.Cog):
         interaction: discord.Interaction,
         channel_id: int,
         sources: str,
-        areas: str,
-        levels: str,
-        models: str,
         frequency_minutes: int,
     ) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
             return
-        frequency_minutes = max(frequency_minutes, 30)
+        frequency_minutes = max(frequency_minutes, 5)
         config = {
             "sources": self._split_csv(sources) or ["linkedin", "indeed", "existing"],
-            "areas": self._split_csv(areas),
-            "levels": self._split_csv(levels),
-            "models": self._split_csv(models),
+            "areas": "all_technology",
+            "levels": "all",
+            "models": "all",
         }
         await self.bot.db.execute(
             """
@@ -168,12 +192,39 @@ class MonitorCog(commands.Cog):
                     [
                         f"Canal: <#{channel_id}>",
                         f"Fontes: {', '.join(config['sources'])}",
-                        f"Areas: {', '.join(config['areas']) or 'todas'}",
-                        f"Niveis: {', '.join(config['levels']) or 'todos'}",
-                        f"Modelos: {', '.join(config['models']) or 'todos'}",
+                        "Areas: todas as areas de tecnologia",
                         f"Frequencia: {frequency_minutes} minutos.",
                     ]
                 ),
+            ),
+            ephemeral=True,
+        )
+
+    async def update_jobs_interval(self, interaction: discord.Interaction, minutes: int) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
+            return
+        cursor = await self.bot.db.execute(
+            "UPDATE monitors SET frequency_minutes = ? WHERE guild_id = ? AND type = ? AND enabled = 1",
+            (minutes, interaction.guild.id, "jobs"),
+        )
+        if not cursor.rowcount:
+            await interaction.response.send_message("Nenhum monitor de vagas ativo. Use `/jobs setup` primeiro.", ephemeral=True)
+            return
+        await interaction.response.send_message(embed=make_embed("Intervalo atualizado", f"Monitor de vagas rodando a cada {minutes} minutos."), ephemeral=True)
+
+    async def run_monitor_now(self, interaction: discord.Interaction, monitor_type: str, title: str) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        stats = await self.manager.run_now(interaction.guild.id, monitor_type)
+        await interaction.followup.send(
+            embed=make_embed(
+                title,
+                f"Encontradas:\n{stats.found} novas vagas\n\nEnviadas:\n{stats.sent}\n\nErros:\n{stats.errors}"
+                if monitor_type == "jobs"
+                else f"Encontrados:\n{stats.found}\n\nEnviados:\n{stats.sent}\n\nErros:\n{stats.errors}",
             ),
             ephemeral=True,
         )
@@ -189,7 +240,7 @@ class MonitorCog(commands.Cog):
         if not rows:
             await interaction.response.send_message(embed=make_embed("Monitor status", "Nenhuma fonte ativa."), ephemeral=True)
             return
-        lines = []
+        sections = {"jobs": [], "hackathons": [], "content": []}
         for row in rows[:20]:
             error = row["last_error"] or "sem erros"
             last_check = row["last_check"] or "ainda nao executado"
@@ -197,20 +248,46 @@ class MonitorCog(commands.Cog):
                 config = self._load_json(row["filters"])
                 sources = config.get("sources", []) if isinstance(config, dict) else []
                 source_lines = "\n".join(f"\u2705 {self._source_label(source)}" for source in sources) or "todas"
-                lines.append(
+                sections["jobs"].append(
                     "\n".join(
                         [
-                            f"\U0001f4bc Jobs Monitor `#{row['id']}`",
-                            f"Canal: <#{row['channel_id']}>",
+                            "\U0001f4bc Jobs",
+                            "Status: \U0001f7e2 Online",
                             f"Fontes:\n{source_lines}",
-                            f"Ultima busca: {last_check}",
+                            f"Ultima execucao: {last_check}",
                             f"Novas vagas encontradas: {row['last_result_count']}",
                             f"Erros: {error}",
                         ]
                     )
                 )
+            elif row["type"] == "hackathons":
+                sections["hackathons"].append(
+                    "\n".join(
+                        [
+                            "\U0001f3c6 Hackathons",
+                            "Status: \U0001f7e2 Online",
+                            f"Ultima execucao: {last_check}",
+                            f"Novos eventos encontrados: {row['last_result_count']}",
+                            f"Erros: {error}",
+                        ]
+                    )
+                )
             else:
-                lines.append(f"`#{row['id']}` {row['type']} | {row['source']} | <#{row['channel_id']}> | {row['frequency_minutes']} min | {last_check} | {error}")
+                sections["content"].append(
+                    "\n".join(
+                        [
+                            "\U0001f3a5 Conteudo",
+                            "Status: \U0001f7e2 Online",
+                            f"Fonte: {row['type']} | {row['source']}",
+                            f"Ultima execucao: {last_check}",
+                            f"Novos conteudos encontrados: {row['last_result_count']}",
+                            f"Erros: {error}",
+                        ]
+                    )
+                )
+        lines = ["\U0001f4e1 DevVerse Monitor"]
+        for key in ("jobs", "hackathons", "content"):
+            lines.extend(sections[key] or [self._empty_status(key)])
         await interaction.response.send_message(embed=make_embed("Monitor status", "\n\n".join(lines)), ephemeral=True)
 
     async def remove(self, interaction: discord.Interaction, monitor_id: int) -> None:
@@ -243,6 +320,10 @@ class MonitorCog(commands.Cog):
 
     def _source_label(self, source: str) -> str:
         return {"linkedin": "LinkedIn", "indeed": "Indeed", "existing": "Outras"}.get(source, source.title())
+
+    def _empty_status(self, key: str) -> str:
+        labels = {"jobs": "\U0001f4bc Jobs", "hackathons": "\U0001f3c6 Hackathons", "content": "\U0001f3a5 Conteudo"}
+        return f"{labels[key]}\nStatus: \U0001f534 Offline"
 
 
 async def setup(bot: commands.Bot) -> None:
