@@ -116,14 +116,14 @@ class NotificationService:
             embed.set_footer(text="DevVerse System")
             return embed
         elif item.type == "hackathon":
-            embed = discord.Embed(title="\U0001f680 DevVerse Alert", description="\U0001f3c6 Novo Hackathon encontrado!", color=discord.Color.purple(), timestamp=utcnow())
-            embed.add_field(name="Nome", value=item.title, inline=False)
-            embed.add_field(name="Categoria", value=item.metadata.get("category", "Nao informado"), inline=True)
-            embed.add_field(name="Tecnologias", value=item.metadata.get("technologies", "Nao informado"), inline=True)
-            embed.add_field(name="Data", value=item.metadata.get("date", "Nao informado"), inline=True)
-            embed.add_field(name="Premiacao", value=item.metadata.get("prize", "Nao informado"), inline=True)
-            embed.add_field(name="Formato", value=item.metadata.get("format", "Nao informado"), inline=True)
-            embed.add_field(name="Link de inscricao", value=item.url, inline=False)
+            embed = discord.Embed(title="\U0001f3c6 Novo hackathon encontrado!", color=discord.Color.purple(), timestamp=utcnow())
+            embed.add_field(name="Nome", value=self._clean_field(item.title), inline=False)
+            embed.add_field(name="Categoria", value=self._clean_field(item.metadata.get("category")), inline=False)
+            embed.add_field(name="Tecnologias", value=self._clean_field(item.metadata.get("technologies")), inline=False)
+            embed.add_field(name="Premiacao", value=self._clean_field(item.metadata.get("prize")), inline=True)
+            embed.add_field(name="Data", value=self._clean_field(item.metadata.get("date")), inline=True)
+            embed.add_field(name="Formato", value=self._clean_field(item.metadata.get("format")), inline=True)
+            embed.add_field(name="Inscricao", value=f"[Abrir pagina]({item.url})", inline=False)
         else:
             embed = discord.Embed(title="\U0001f680 DevVerse Alert", description="\U0001f3a5 Novo conteudo publicado!", color=discord.Color.orange(), timestamp=utcnow())
             embed.add_field(name="Criador", value=item.metadata.get("creator", "Nao informado"), inline=True)
@@ -133,3 +133,7 @@ class NotificationService:
             embed.add_field(name="Link", value=item.url, inline=False)
         embed.set_footer(text="DevVerse System")
         return embed
+
+    def _clean_field(self, value: object, fallback: str = "Nao informado") -> str:
+        text = str(value or "").strip()
+        return text[:1024] if text else fallback
