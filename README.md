@@ -53,6 +53,7 @@ GITHUB_WEBHOOK_SECRET=
 MONITOR_ENABLED=true
 MONITOR_INTERVAL_MINUTES=5
 JOBS_SOURCE_URLS=https://remoteok.com/api
+JOBS_DEFAULT_LOCATION=Worldwide
 HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
 INSTAGRAM_RSS_TEMPLATE=
 ```
@@ -143,10 +144,10 @@ O DevVerse Monitor roda em segundo plano e envia notificacoes automaticas nos ca
 Configurar vagas:
 
 ```text
-/jobs setup canal:#vagas areas:backend,python,devops frequencia_minutos:60
+/jobs setup canal:#vagas fontes:linkedin,indeed,existing areas:backend,ai engineer,cybersecurity niveis:junior,mid modelos:remote,hybrid frequencia_minutos:60
 ```
 
-As areas suportadas incluem frontend, backend, full stack, mobile, data science, machine learning, artificial intelligence, cybersecurity, devops, cloud e blockchain.
+As fontes suportadas sao `linkedin`, `indeed` e `existing`. As areas suportadas incluem frontend, backend, full stack, mobile, data science, machine learning, ai engineer, cybersecurity, devops e cloud. Os niveis aceitos sao internship, entry level, junior, mid e senior. Os modelos aceitos sao remote, hybrid e on-site.
 
 Configurar hackathons:
 
@@ -185,6 +186,7 @@ As fontes podem ser trocadas por `.env`:
 
 ```env
 JOBS_SOURCE_URLS=https://remoteok.com/api
+JOBS_DEFAULT_LOCATION=Worldwide
 HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
 MONITOR_INTERVAL_MINUTES=5
 ```

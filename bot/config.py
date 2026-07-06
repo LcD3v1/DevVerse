@@ -52,6 +52,7 @@ class Settings:
     monitor_enabled: bool
     monitor_interval_minutes: int
     jobs_source_urls: tuple[str, ...]
+    jobs_default_location: str
     hackathon_source_urls: tuple[str, ...]
     instagram_rss_template: str
 
@@ -76,6 +77,7 @@ settings = Settings(
         for part in os.getenv("JOBS_SOURCE_URLS", "https://remoteok.com/api").split(",")
         if part.strip()
     ),
+    jobs_default_location=os.getenv("JOBS_DEFAULT_LOCATION", "Worldwide"),
     hackathon_source_urls=tuple(
         part.strip()
         for part in os.getenv("HACKATHON_SOURCE_URLS", "https://devpost.com/api/hackathons").split(",")

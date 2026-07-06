@@ -18,9 +18,25 @@ class JobsGroup(app_commands.Group):
         self.cog = cog
 
     @app_commands.command(name="setup", description="Configura alertas automaticos de vagas.")
+    @app_commands.choices(
+        frequencia_minutos=[
+            app_commands.Choice(name="30 minutos", value=30),
+            app_commands.Choice(name="1 hora", value=60),
+            app_commands.Choice(name="3 horas", value=180),
+        ]
+    )
     @admin_check()
-    async def setup(self, interaction: discord.Interaction, canal: discord.TextChannel, areas: str = "", frequencia_minutos: int = 60) -> None:
-        await self.cog.upsert_monitor(interaction, "jobs", "internet", canal.id, areas, frequencia_minutos)
+    async def setup(
+        self,
+        interaction: discord.Interaction,
+        canal: discord.TextChannel,
+        fontes: str = "linkedin,indeed,existing",
+        areas: str = "",
+        niveis: str = "",
+        modelos: str = "",
+        frequencia_minutos: int = 60,
+    ) -> None:
+        await self.cog.upsert_jobs_monitor(interaction, canal.id, fontes, areas, niveis, modelos, frequencia_minutos)
 
 
 class HackathonGroup(app_commands.Group):
@@ -113,12 +129,61 @@ class MonitorCog(commands.Cog):
             ephemeral=True,
         )
 
+    async def upsert_jobs_monitor(
+        self,
+        interaction: discord.Interaction,
+        channel_id: int,
+        sources: str,
+        areas: str,
+        levels: str,
+        models: str,
+        frequency_minutes: int,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
+            return
+        frequency_minutes = max(frequency_minutes, 30)
+        config = {
+            "sources": self._split_csv(sources) or ["linkedin", "indeed", "existing"],
+            "areas": self._split_csv(areas),
+            "levels": self._split_csv(levels),
+            "models": self._split_csv(models),
+        }
+        await self.bot.db.execute(
+            """
+            INSERT INTO monitors (guild_id, type, source, channel_id, filters, frequency_minutes)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, type, source) DO UPDATE SET
+                channel_id = excluded.channel_id,
+                filters = excluded.filters,
+                frequency_minutes = excluded.frequency_minutes,
+                enabled = 1
+            """,
+            (interaction.guild.id, "jobs", "career", channel_id, json.dumps(config), frequency_minutes),
+        )
+        await interaction.response.send_message(
+            embed=make_embed(
+                "Jobs Monitor configurado",
+                "\n".join(
+                    [
+                        f"Canal: <#{channel_id}>",
+                        f"Fontes: {', '.join(config['sources'])}",
+                        f"Areas: {', '.join(config['areas']) or 'todas'}",
+                        f"Niveis: {', '.join(config['levels']) or 'todos'}",
+                        f"Modelos: {', '.join(config['models']) or 'todos'}",
+                        f"Frequencia: {frequency_minutes} minutos.",
+                    ]
+                ),
+            ),
+            ephemeral=True,
+        )
+
     async def status(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Use dentro de um servidor.", ephemeral=True)
             return
         rows = await self.bot.db.fetchall(
-            "SELECT id, type, source, channel_id, frequency_minutes, last_check, last_error FROM monitors WHERE guild_id = ? AND enabled = 1 ORDER BY id",
+            "SELECT id, type, source, channel_id, filters, frequency_minutes, last_check, last_error, last_result_count FROM monitors WHERE guild_id = ? AND enabled = 1 ORDER BY id",
             (interaction.guild.id,),
         )
         if not rows:
@@ -128,8 +193,25 @@ class MonitorCog(commands.Cog):
         for row in rows[:20]:
             error = row["last_error"] or "sem erros"
             last_check = row["last_check"] or "ainda nao executado"
-            lines.append(f"`#{row['id']}` {row['type']} | {row['source']} | <#{row['channel_id']}> | {row['frequency_minutes']} min | {last_check} | {error}")
-        await interaction.response.send_message(embed=make_embed("Monitor status", "\n".join(lines)), ephemeral=True)
+            if row["type"] == "jobs":
+                config = self._load_json(row["filters"])
+                sources = config.get("sources", []) if isinstance(config, dict) else []
+                source_lines = "\n".join(f"\u2705 {self._source_label(source)}" for source in sources) or "todas"
+                lines.append(
+                    "\n".join(
+                        [
+                            f"\U0001f4bc Jobs Monitor `#{row['id']}`",
+                            f"Canal: <#{row['channel_id']}>",
+                            f"Fontes:\n{source_lines}",
+                            f"Ultima busca: {last_check}",
+                            f"Novas vagas encontradas: {row['last_result_count']}",
+                            f"Erros: {error}",
+                        ]
+                    )
+                )
+            else:
+                lines.append(f"`#{row['id']}` {row['type']} | {row['source']} | <#{row['channel_id']}> | {row['frequency_minutes']} min | {last_check} | {error}")
+        await interaction.response.send_message(embed=make_embed("Monitor status", "\n\n".join(lines)), ephemeral=True)
 
     async def remove(self, interaction: discord.Interaction, monitor_id: int) -> None:
         if not interaction.guild:
@@ -149,6 +231,18 @@ class MonitorCog(commands.Cog):
     @monitor_task.before_loop
     async def before_monitor_task(self) -> None:
         await self.bot.wait_until_ready()
+
+    def _split_csv(self, value: str) -> list[str]:
+        return [part.strip().lower() for part in value.split(",") if part.strip()]
+
+    def _load_json(self, value: str):
+        try:
+            return json.loads(value) if value else {}
+        except json.JSONDecodeError:
+            return {}
+
+    def _source_label(self, source: str) -> str:
+        return {"linkedin": "LinkedIn", "indeed": "Indeed", "existing": "Outras"}.get(source, source.title())
 
 
 async def setup(bot: commands.Bot) -> None:

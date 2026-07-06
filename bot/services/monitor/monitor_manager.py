@@ -50,8 +50,8 @@ class MonitorManager:
         last_error = ""
         for attempt in range(1, 4):
             try:
-                await self._run_monitor(row)
-                await self._mark_checked(row["id"])
+                result_count = await self._run_monitor(row)
+                await self._mark_checked(row["id"], result_count=result_count)
                 return
             except Exception as exc:
                 last_error = str(exc)[:500]
@@ -59,7 +59,7 @@ class MonitorManager:
                 await asyncio.sleep(min(2 * attempt, 10))
         await self._mark_checked(row["id"], last_error)
 
-    async def _run_monitor(self, row) -> None:
+    async def _run_monitor(self, row) -> int:
         monitor_type = row["type"]
         filters = self._load_filters(row["filters"])
         if monitor_type == "jobs":
@@ -70,25 +70,25 @@ class MonitorManager:
             items = await self.social.fetch(monitor_type, row["source"])
         else:
             logger.warning("Tipo de monitor desconhecido: %s", monitor_type)
-            return
+            return 0
         sent = 0
         for item in items[:10]:
             if await self.notifications.send(row["channel_id"], item):
                 sent += 1
         logger.info("Monitor %s encontrou %s item(ns), enviados %s", row["id"], len(items), sent)
+        return sent
 
-    def _load_filters(self, raw: str) -> list[str]:
+    def _load_filters(self, raw: str):
         if not raw:
             return []
         try:
             value = json.loads(raw)
-            return value if isinstance(value, list) else []
+            return value if isinstance(value, (list, dict)) else []
         except json.JSONDecodeError:
             return [part.strip() for part in raw.split(",") if part.strip()]
 
-    async def _mark_checked(self, monitor_id: int, error: str = "") -> None:
+    async def _mark_checked(self, monitor_id: int, error: str = "", result_count: int = 0) -> None:
         await self.bot.db.execute(
-            "UPDATE monitors SET last_check = ?, last_error = ? WHERE id = ?",
-            (datetime.now(timezone.utc).isoformat(), error, monitor_id),
+            "UPDATE monitors SET last_check = ?, last_error = ?, last_result_count = ? WHERE id = ?",
+            (datetime.now(timezone.utc).isoformat(), error, result_count, monitor_id),
         )
-
