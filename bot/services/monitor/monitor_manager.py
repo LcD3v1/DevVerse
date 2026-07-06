@@ -21,8 +21,11 @@ logger = logging.getLogger("devverse.monitor")
 @dataclass(slots=True)
 class MonitorRunStats:
     found: int = 0
+    new: int = 0
     sent: int = 0
+    duplicates: int = 0
     errors: int = 0
+    missing_channel: bool = False
 
 
 class MonitorManager:
@@ -61,16 +64,25 @@ class MonitorManager:
             (guild_id, db_type),
         )
         stats = MonitorRunStats()
+        if not rows:
+            stats.missing_channel = True
+            return stats
         for row in rows:
             try:
                 result = await self._run_monitor(row)
                 stats.found += result.found
+                stats.new += result.new
                 stats.sent += result.sent
+                stats.duplicates += result.duplicates
+                stats.errors += result.errors
+                stats.missing_channel = stats.missing_channel or result.missing_channel
                 await self._mark_checked(row["id"], result_count=result.found)
+                await self._record_monitor_log(row["type"], result.found, result.errors)
             except Exception as exc:
                 stats.errors += 1
                 logger.exception("Erro na execucao manual do monitor %s", row["id"])
                 await self._mark_checked(row["id"], str(exc)[:500], 0)
+                await self._record_monitor_log(row["type"], 0, 1)
         return stats
 
     async def _run_with_retry(self, row) -> None:
@@ -79,12 +91,14 @@ class MonitorManager:
             try:
                 result = await self._run_monitor(row)
                 await self._mark_checked(row["id"], result_count=result.found)
+                await self._record_monitor_log(row["type"], result.found, result.errors)
                 return
             except Exception as exc:
                 last_error = str(exc)[:500]
                 logger.exception("Erro no monitor %s tentativa %s", row["id"], attempt)
                 await asyncio.sleep(min(2 * attempt, 10))
         await self._mark_checked(row["id"], last_error)
+        await self._record_monitor_log(row["type"], 0, 1)
 
     async def _run_monitor(self, row) -> MonitorRunStats:
         monitor_type = row["type"]
@@ -99,11 +113,27 @@ class MonitorManager:
             logger.warning("Tipo de monitor desconhecido: %s", monitor_type)
             return MonitorRunStats()
         sent = 0
+        duplicates = 0
+        errors = 0
+        missing_channel = False
         for item in items[:10]:
-            if await self.notifications.send(row["channel_id"], item):
+            await self._record_item_log(monitor_type, item, row["channel_id"], "found")
+            result = await self.notifications.send(row["channel_id"], item)
+            if result.sent:
                 sent += 1
+                await self._record_item_log(monitor_type, item, row["channel_id"], "sent")
+            elif result.duplicate:
+                duplicates += 1
+                await self._record_item_log(monitor_type, item, row["channel_id"], "duplicate")
+            elif result.status == "missing_channel":
+                missing_channel = True
+                errors += 1
+                await self._record_item_log(monitor_type, item, row["channel_id"], "missing_channel")
+            else:
+                errors += 1
+                await self._record_item_log(monitor_type, item, row["channel_id"], "error")
         logger.info("Monitor %s encontrou %s item(ns), enviados %s", row["id"], len(items), sent)
-        return MonitorRunStats(found=len(items), sent=sent)
+        return MonitorRunStats(found=len(items), new=sent + errors, sent=sent, duplicates=duplicates, errors=errors, missing_channel=missing_channel)
 
     def _load_filters(self, raw: str):
         if not raw:
@@ -118,4 +148,16 @@ class MonitorManager:
         await self.bot.db.execute(
             "UPDATE monitors SET last_check = ?, last_error = ?, last_result_count = ? WHERE id = ?",
             (datetime.now(timezone.utc).isoformat(), error, result_count, monitor_id),
+        )
+
+    async def _record_monitor_log(self, monitor_type: str, items_found: int, errors: int) -> None:
+        await self.bot.db.execute(
+            "INSERT INTO monitor_logs (type, items_found, errors) VALUES (?, ?, ?)",
+            (monitor_type, items_found, errors),
+        )
+
+    async def _record_item_log(self, monitor_type: str, item, channel_id: int, status: str) -> None:
+        await self.bot.db.execute(
+            "INSERT INTO monitor_item_logs (type, title, url, channel_id, status) VALUES (?, ?, ?, ?, ?)",
+            (monitor_type, item.title, item.url, channel_id, status),
         )

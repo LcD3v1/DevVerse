@@ -102,9 +102,12 @@ O setup do bot cria automaticamente:
 
 - `monitors`
 - `notifications`
+- `sent_notifications`
+- `monitor_logs`
 - `jobs`
 - `hackathons`
 - `social_posts`
+- `content_tags`
 
 `jobs` e `notifications` guardam `source`, `external_id` e `unique_hash`. Para vagas, a deduplicacao prioriza o hash de `source + external_id`, evitando reenviar a mesma vaga mesmo quando o link tiver parametros diferentes.
 

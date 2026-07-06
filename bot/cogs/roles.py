@@ -7,7 +7,7 @@ from discord.ext import commands
 from bot.permissions import admin_check
 from bot.templates import ROLE_PANEL_GROUPS
 from bot.utils import make_embed
-from bot.views.onboarding import ALL_ONBOARDING_ROLES, OnboardingView
+from bot.views.onboarding import ONBOARDING_GROUPS, OnboardingView, load_role_ids
 from bot.views.role_menu import RolePanelView
 
 
@@ -29,7 +29,15 @@ class RolesCog(commands.Cog):
             await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
-        await self._ensure_onboarding_roles(interaction.guild)
+        missing = self._missing_configured_roles(interaction.guild)
+        if missing:
+            await interaction.followup.send(
+                "Configure IDs validos em `data/roles.json` antes de publicar o painel. Chaves pendentes: "
+                + ", ".join(missing[:20]),
+                ephemeral=True,
+            )
+            return
+        await self._ensure_area_channels(interaction.guild)
         channel = await self._ensure_welcome_channel(interaction.guild)
         await channel.send(embed=self._onboarding_embed(), view=OnboardingView())
         await interaction.followup.send(embed=make_embed("Sistema de cargos pronto", f"Painel enviado em {channel.mention}."), ephemeral=True)
@@ -44,17 +52,47 @@ class RolesCog(commands.Cog):
         except discord.HTTPException:
             return
 
-    async def _ensure_onboarding_roles(self, guild: discord.Guild) -> None:
-        existing = {role.name for role in guild.roles}
-        for role_name in ALL_ONBOARDING_ROLES:
-            if role_name not in existing:
-                await guild.create_role(name=role_name, reason="DevVerse setup_roles")
+    def _missing_configured_roles(self, guild: discord.Guild) -> list[str]:
+        role_ids = load_role_ids()
+        missing = []
+        expected = [key for group in ONBOARDING_GROUPS.values() for key, _, _ in group["options"]]
+        for key in expected:
+            if key not in role_ids:
+                missing.append(key)
+        for key, role_id in role_ids.items():
+            if guild.get_role(role_id) is None:
+                missing.append(key)
+        return sorted(set(missing))
 
     async def _ensure_welcome_channel(self, guild: discord.Guild) -> discord.TextChannel:
         channel = self._find_welcome_channel(guild)
         if channel:
             return channel
         return await guild.create_text_channel("\U0001f44b\u30fbbem-vindo", reason="DevVerse setup_roles")
+
+    async def _ensure_area_channels(self, guild: discord.Guild) -> None:
+        role_ids = load_role_ids()
+        category = discord.utils.get(guild.categories, name="\U0001f4da Estudos")
+        if not category:
+            category = await guild.create_category("\U0001f4da Estudos", reason="DevVerse setup_roles")
+        area_channels = {
+            "backend": ["backend-chat", "backend-news", "backend-recursos", "vagas-backend"],
+            "frontend": ["frontend-chat", "frontend-news", "frontend-recursos"],
+            "ai": ["ai-chat", "ai-news", "ai-recursos", "machine-learning", "papers-ai"],
+            "cybersecurity": ["cyber-chat", "security-news", "ctf"],
+        }
+        for area_key, channel_names in area_channels.items():
+            role = guild.get_role(role_ids.get(area_key, 0))
+            overwrites = None
+            if role:
+                overwrites = {
+                    guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                    role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                }
+            for channel_name in channel_names:
+                if discord.utils.get(guild.text_channels, name=channel_name):
+                    continue
+                await guild.create_text_channel(channel_name, category=category, overwrites=overwrites, reason="DevVerse setup_roles")
 
     def _find_welcome_channel(self, guild: discord.Guild) -> discord.TextChannel | None:
         for channel in guild.text_channels:
@@ -64,31 +102,20 @@ class RolesCog(commands.Cog):
 
     def _onboarding_embed(self) -> discord.Embed:
         return make_embed(
-            "Bem-vindo ao DevVerse!",
+            "\U0001f680 Bem-vindo ao DevVerse!",
             "\n".join(
                 [
-                    "Escolha seu perfil abaixo:",
-                    "\U0001f393 Estudante",
-                    "\U0001f9d1\u200d\U0001f3eb Mentor",
-                    "\U0001f4bc Profissional",
-                    "",
-                    "Escolha sua area:",
-                    "\U0001f4bb Frontend",
-                    "\u2699\ufe0f Backend",
-                    "\U0001f310 Full Stack",
-                    "\U0001f4f1 Mobile",
-                    "\U0001f916 Inteligencia Artificial",
-                    "\U0001f4ca Data Science",
-                    "\U0001f510 Cybersecurity",
-                    "\u2601\ufe0f Cloud",
-                    "\U0001f3ae Game Development",
+                    "Configure seu perfil usando os menus abaixo.",
                     "",
                     "Escolha seu nivel:",
                     "\U0001f331 Iniciante",
-                    "\U0001f4da Estudando",
-                    "\U0001f9d1\u200d\U0001f4bb Junior",
-                    "\U0001f680 Pleno",
-                    "\u2b50 Senior",
+                    "\U0001f4d8 Basico",
+                    "\U0001f4d7 Intermediario",
+                    "\U0001f4d9 Avancado",
+                    "\U0001f3c6 Expert",
+                    "",
+                    "Escolha especialidades, linguagens, frameworks, sistemas e objetivos.",
+                    "Depois clique em Confirmar.",
                 ]
             ),
         )

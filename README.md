@@ -188,7 +188,28 @@ Administracao:
 
 ## Onboarding e cargos
 
-Use `/setup_roles` para criar os cargos de perfil, area e nivel, publicar o painel em `#👋・bem-vindo` e ativar a selecao por botoes. Quando alguem entrar no servidor, o bot envia o painel de boas-vindas no mesmo canal.
+Configure os IDs dos cargos ja existentes em `data/roles.json`. O bot nao cria cargos novos para o painel de entrada; ele apenas aplica/remover cargos pelos IDs configurados.
+
+Use `/setup_roles` para publicar o painel em `#👋・bem-vindo`, criar a estrutura de canais por area e ativar a selecao por menus. Quando alguem entrar no servidor, o bot envia o painel de boas-vindas no mesmo canal.
+
+Permissoes necessarias:
+
+```text
+Manage Roles
+Manage Channels
+Send Messages
+Use Application Commands
+```
+
+Limpeza de mensagens:
+
+```text
+/clear quantidade quantidade:100
+/clear tempo tempo:24h
+/clear usuario usuario:@membro
+```
+
+Exige `Administrator` ou `Manage Messages` e registra logs em `#mod-logs` quando o canal existir.
 
 As fontes podem ser trocadas por `.env`:
 

@@ -160,6 +160,30 @@ class Database:
                 sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(type, url)
             );
+            CREATE TABLE IF NOT EXISTS sent_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                external_id TEXT NOT NULL DEFAULT '',
+                url TEXT NOT NULL DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(type, external_id, url)
+            );
+            CREATE TABLE IF NOT EXISTS monitor_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                executed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                items_found INTEGER NOT NULL DEFAULT 0,
+                errors INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS monitor_item_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                url TEXT NOT NULL DEFAULT '',
+                channel_id INTEGER,
+                status TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -186,15 +210,23 @@ class Database:
                 date_found TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(platform, url)
             );
+            CREATE TABLE IF NOT EXISTS content_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_id INTEGER NOT NULL,
+                tag TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS user_profiles (
-                user_id INTEGER PRIMARY KEY,
-                role_type TEXT NOT NULL DEFAULT '',
-                area TEXT NOT NULL DEFAULT '',
-                level TEXT NOT NULL DEFAULT '',
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                role_id INTEGER NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
+        await self._rebuild_user_profiles_if_needed()
+        await self._ensure_column("user_profiles", "category", "TEXT NOT NULL DEFAULT ''")
+        await self._ensure_column("user_profiles", "role_id", "INTEGER NOT NULL DEFAULT 0")
         await self._ensure_column("monitors", "last_result_count", "INTEGER NOT NULL DEFAULT 0")
         await self._ensure_column("notifications", "source", "TEXT NOT NULL DEFAULT ''")
         await self._ensure_column("notifications", "external_id", "TEXT NOT NULL DEFAULT ''")
@@ -212,6 +244,26 @@ class Database:
             columns = {row["name"] for row in await cursor.fetchall()}
         if column not in columns:
             await self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    async def _rebuild_user_profiles_if_needed(self) -> None:
+        assert self.conn
+        async with self.conn.execute("PRAGMA table_info(user_profiles)") as cursor:
+            columns = await cursor.fetchall()
+        has_id = any(row["name"] == "id" for row in columns)
+        if has_id:
+            return
+        await self.conn.execute("ALTER TABLE user_profiles RENAME TO user_profiles_legacy")
+        await self.conn.execute(
+            """
+            CREATE TABLE user_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                role_id INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
 
     async def add_created_item(self, guild_id: int, item_type: str, item_id: int, item_name: str) -> None:
         await self.execute(

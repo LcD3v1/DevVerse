@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 
 import discord
 from discord import app_commands
@@ -219,12 +220,22 @@ class MonitorCog(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         stats = await self.manager.run_now(interaction.guild.id, monitor_type)
+        channel_warning = "\n\n\u26a0\ufe0f Canal de destino nao configurado." if stats.missing_channel else ""
+        found_label = "Encontradas" if monitor_type == "jobs" else "Encontrados"
+        item_label = "novas vagas" if monitor_type == "jobs" else "itens"
         await interaction.followup.send(
             embed=make_embed(
                 title,
-                f"Encontradas:\n{stats.found} novas vagas\n\nEnviadas:\n{stats.sent}\n\nErros:\n{stats.errors}"
-                if monitor_type == "jobs"
-                else f"Encontrados:\n{stats.found}\n\nEnviados:\n{stats.sent}\n\nErros:\n{stats.errors}",
+                "\n\n".join(
+                    [
+                        f"{found_label}:\n{stats.found} {item_label}",
+                        f"Novos:\n{stats.new}",
+                        f"Enviados:\n{stats.sent}",
+                        f"Duplicados:\n{stats.duplicates}",
+                        f"Erros:\n{stats.errors}",
+                    ]
+                )
+                + channel_warning,
             ),
             ephemeral=True,
         )
@@ -244,6 +255,7 @@ class MonitorCog(commands.Cog):
         for row in rows[:20]:
             error = row["last_error"] or "sem erros"
             last_check = row["last_check"] or "ainda nao executado"
+            next_check = self._next_execution(row["last_check"], row["frequency_minutes"])
             if row["type"] == "jobs":
                 config = self._load_json(row["filters"])
                 sources = config.get("sources", []) if isinstance(config, dict) else []
@@ -255,6 +267,7 @@ class MonitorCog(commands.Cog):
                             "Status: \U0001f7e2 Online",
                             f"Fontes:\n{source_lines}",
                             f"Ultima execucao: {last_check}",
+                            f"Proxima execucao: {next_check}",
                             f"Novas vagas encontradas: {row['last_result_count']}",
                             f"Erros: {error}",
                         ]
@@ -267,6 +280,7 @@ class MonitorCog(commands.Cog):
                             "\U0001f3c6 Hackathons",
                             "Status: \U0001f7e2 Online",
                             f"Ultima execucao: {last_check}",
+                            f"Proxima execucao: {next_check}",
                             f"Novos eventos encontrados: {row['last_result_count']}",
                             f"Erros: {error}",
                         ]
@@ -280,6 +294,7 @@ class MonitorCog(commands.Cog):
                             "Status: \U0001f7e2 Online",
                             f"Fonte: {row['type']} | {row['source']}",
                             f"Ultima execucao: {last_check}",
+                            f"Proxima execucao: {next_check}",
                             f"Novos conteudos encontrados: {row['last_result_count']}",
                             f"Erros: {error}",
                         ]
@@ -324,6 +339,15 @@ class MonitorCog(commands.Cog):
     def _empty_status(self, key: str) -> str:
         labels = {"jobs": "\U0001f4bc Jobs", "hackathons": "\U0001f3c6 Hackathons", "content": "\U0001f3a5 Conteudo"}
         return f"{labels[key]}\nStatus: \U0001f534 Offline"
+
+    def _next_execution(self, last_check: str | None, frequency_minutes: int) -> str:
+        if not last_check:
+            return "assim que o bot executar o ciclo"
+        try:
+            checked_at = datetime.fromisoformat(last_check)
+        except ValueError:
+            return "nao calculado"
+        return (checked_at + timedelta(minutes=frequency_minutes)).isoformat()
 
 
 async def setup(bot: commands.Bot) -> None:
