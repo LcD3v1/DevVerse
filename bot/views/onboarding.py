@@ -118,6 +118,7 @@ ONBOARDING_GROUPS = {
 
 PRIMARY_ONBOARDING_GROUPS = ["profile", "level", "specialties", "languages"]
 EXTRA_ONBOARDING_GROUPS = ["frameworks", "systems", "goals"]
+ONBOARDING_STATES: dict[int, "OnboardingState"] = {}
 
 
 def load_role_ids() -> dict[str, int]:
@@ -217,6 +218,9 @@ class ConfirmProfileButton(discord.ui.Button):
         if not state or not state.selected:
             await interaction.response.send_message("Escolha pelo menos uma opcao antes de confirmar.", ephemeral=True, delete_after=8)
             return
+        if not state.selected.get("profile"):
+            await interaction.response.send_message("Escolha seu perfil antes de confirmar.", ephemeral=True, delete_after=8)
+            return
         selected_keys = {key for values in state.selected.values() for key in values}
         selected_role_by_key = {key: resolve_role(interaction.guild, key) for key in selected_keys}
         missing = [key for key, role in selected_role_by_key.items() if role is None]
@@ -280,8 +284,36 @@ class OnboardingView(discord.ui.View):
     def __init__(self, groups: list[str] | None = None, guild: discord.Guild | None = None) -> None:
         super().__init__(timeout=None)
         groups = groups or PRIMARY_ONBOARDING_GROUPS
-        states: dict[int, OnboardingState] = {}
         for group_key in groups:
             if configured_options(guild, group_key):
-                self.add_item(OnboardingSelect(group_key, states, guild))
-        self.add_item(ConfirmProfileButton(states))
+                self.add_item(OnboardingSelect(group_key, ONBOARDING_STATES, guild))
+        self.add_item(ConfirmProfileButton(ONBOARDING_STATES))
+
+
+class OnboardingPanelButton(discord.ui.Button):
+    def __init__(self, label: str, emoji: str, groups: list[str]) -> None:
+        super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.primary, custom_id=f"devverse_onboarding_panel:{label}")
+        self.groups = groups
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Use dentro do servidor.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="Configurar perfil DevVerse",
+                description="Escolha as opcoes abaixo e clique em Confirmar perfil.",
+                color=discord.Color.blurple(),
+            ),
+            view=OnboardingView(self.groups, interaction.guild),
+            ephemeral=True,
+        )
+
+
+class OnboardingPanelView(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+        self.add_item(OnboardingPanelButton("Perfil", "\U0001f9ed", ["profile", "level"]))
+        self.add_item(OnboardingPanelButton("Tecnologias", "\U0001f4bb", ["specialties", "languages"]))
+        self.add_item(OnboardingPanelButton("Extras", "\U0001f6e0\ufe0f", ["frameworks", "systems", "goals"]))
+        self.add_item(ConfirmProfileButton(ONBOARDING_STATES))

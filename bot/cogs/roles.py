@@ -9,7 +9,7 @@ from discord.ext import commands
 from bot.permissions import admin_check
 from bot.templates import ROLE_PANEL_GROUPS
 from bot.utils import make_embed
-from bot.views.onboarding import EXTRA_ONBOARDING_GROUPS, ONBOARDING_GROUPS, PRIMARY_ONBOARDING_GROUPS, OnboardingView, load_role_ids, resolve_role
+from bot.views.onboarding import EXTRA_ONBOARDING_GROUPS, ONBOARDING_GROUPS, PRIMARY_ONBOARDING_GROUPS, OnboardingPanelView, OnboardingView, load_role_ids, resolve_role
 from bot.views.role_menu import RolePanelView
 
 
@@ -18,6 +18,7 @@ class RolesCog(commands.Cog):
         self.bot = bot
         self.bot.add_view(OnboardingView(PRIMARY_ONBOARDING_GROUPS))
         self.bot.add_view(OnboardingView(EXTRA_ONBOARDING_GROUPS))
+        self.bot.add_view(OnboardingPanelView())
 
     @app_commands.command(name="rolepanel", description="Cria o painel de autoatribuição de cargos.")
     @admin_check()
@@ -44,8 +45,8 @@ class RolesCog(commands.Cog):
             welcome_channel = canal_entrada or await self._ensure_welcome_channel(interaction.guild)
             profile_channel = canal_escolha or welcome_channel
             await self._save_onboarding_settings(interaction.guild.id, visitor_role, welcome_channel, profile_channel)
-            await profile_channel.send(embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS, interaction.guild))
-            await profile_channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS, interaction.guild))
+            await self._cleanup_old_onboarding_messages(profile_channel)
+            await profile_channel.send(embed=self._onboarding_embed(), view=OnboardingPanelView())
         except discord.Forbidden:
             await interaction.followup.send("Nao tenho permissao para criar/enviar o painel. Verifique `Manage Channels` e `Send Messages`.", ephemeral=True)
             return
@@ -106,13 +107,6 @@ class RolesCog(commands.Cog):
                 )
         except discord.HTTPException:
             pass
-        if not channel:
-            return
-        try:
-            await channel.send(content=member.mention, embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS, member.guild), delete_after=3600)
-            await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS, member.guild), delete_after=3600)
-        except discord.HTTPException:
-            return
 
     def _missing_configured_roles(self, guild: discord.Guild) -> list[str]:
         missing = []
@@ -127,6 +121,17 @@ class RolesCog(commands.Cog):
         if channel:
             return channel
         return await guild.create_text_channel("\U0001f44b\u30fbbem-vindo", reason="DevVerse setup_roles")
+
+    async def _cleanup_old_onboarding_messages(self, channel: discord.TextChannel) -> None:
+        titles = {"\U0001f680 Bem-vindo ao DevVerse!", "Preferencias DevVerse", "Configurar perfil DevVerse"}
+        try:
+            async for message in channel.history(limit=50):
+                if message.author != channel.guild.me:
+                    continue
+                if message.embeds and message.embeds[0].title in titles:
+                    await message.delete()
+        except discord.HTTPException:
+            return
 
     async def _save_onboarding_settings(
         self,
@@ -213,22 +218,14 @@ class RolesCog(commands.Cog):
             "\U0001f680 Bem-vindo ao DevVerse!",
             "\n".join(
                 [
-                    "Configure seu perfil usando os menus abaixo.",
+                    "Configure seu perfil para liberar o acesso a comunidade.",
                     "",
-                    "Escolha seu perfil:",
-                    "\U0001f393 Estudante",
-                    "\U0001f9d1\u200d\U0001f3eb Mentor",
-                    "\U0001f4bc Profissional",
+                    "Use os botoes abaixo:",
+                    "\U0001f9ed Perfil: estudante, mentor ou profissional e nivel",
+                    "\U0001f4bb Tecnologias: areas e linguagens",
+                    "\U0001f6e0\ufe0f Extras: frameworks, sistemas e objetivos",
                     "",
-                    "Escolha seu nivel:",
-                    "\U0001f331 Iniciante",
-                    "\U0001f4d8 Basico",
-                    "\U0001f4d7 Intermediario",
-                    "\U0001f4d9 Avancado",
-                    "\U0001f3c6 Expert",
-                    "",
-                    "Escolha suas especialidades.",
-                    "Depois clique em Confirmar neste painel.",
+                    "Finalize em Confirmar perfil.",
                 ]
             ),
         )
