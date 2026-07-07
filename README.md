@@ -225,6 +225,10 @@ Configure os IDs dos cargos ja existentes em `data/roles.json`. O bot nao cria c
 
 Use `/setup_roles` para publicar o painel em `#👋・bem-vindo`, criar a estrutura de canais por area e ativar a selecao por menus. Quando alguem entrar no servidor, o bot envia o painel de boas-vindas no mesmo canal.
 
+O arquivo `data/roles.json` vem com placeholders `ROLE_ID`. Troque cada valor pelo ID numerico do cargo ja criado no Discord antes de usar `/setup_roles`.
+
+O comando `/setup_devserver` tambem nao cria cargos. Ele apenas valida se os cargos esperados existem e cria/valida canais e categorias do servidor.
+
 Permissoes necessarias:
 
 ```text

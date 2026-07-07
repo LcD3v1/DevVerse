@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.permissions import admin_check
-from bot.templates import INITIAL_MESSAGES, ROLE_COLORS, ROLE_GROUPS, SERVER_CATEGORIES
+from bot.templates import INITIAL_MESSAGES, ROLE_GROUPS, SERVER_CATEGORIES
 from bot.utils import make_embed
 from bot.views.confirm_view import ConfirmView
 
@@ -18,24 +18,21 @@ class SetupCog(commands.Cog):
         existing = discord.utils.get(guild.roles, name=name)
         if existing:
             return existing
-        permissions = discord.Permissions.none()
-        if name in {"👑 Owner", "🛡️ Co-Owner"}:
-            permissions = discord.Permissions(administrator=True)
-        elif name == "⚙️ Admin":
-            permissions.update(manage_channels=True, manage_roles=True, manage_messages=True, manage_events=True, kick_members=True, ban_members=True)
-        elif name == "🧑‍🏫 Mentor":
-            permissions.update(manage_messages=True, create_public_threads=True, create_private_threads=True, move_members=True)
-        else:
-            permissions.update(send_messages=True, use_application_commands=True, connect=True, speak=True, attach_files=True, stream=True)
-        role = await guild.create_role(name=name, color=ROLE_COLORS.get(group, discord.Color.default()), permissions=permissions, reason="DevVerse setup")
-        await self.bot.db.add_created_item(guild.id, "role", role.id, role.name)
-        return role
+        raise ValueError(f"Cargo existente nao encontrado: {name}")
 
     async def _base_overwrites(self, guild: discord.Guild) -> dict[discord.Role, discord.PermissionOverwrite]:
         student = discord.utils.get(guild.roles, name="🎓 Estudante") or guild.default_role
         return {
             guild.default_role: discord.PermissionOverwrite(read_messages=True),
-            student: discord.PermissionOverwrite(read_messages=True, send_messages=True, use_application_commands=True, attach_files=True, connect=True, speak=True, stream=True),
+            student: discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True,
+                use_application_commands=True,
+                attach_files=True,
+                connect=True,
+                speak=True,
+                stream=True,
+            ),
         }
 
     async def _restricted_overwrites(self, guild: discord.Guild, channel_name: str) -> dict[discord.Role, discord.PermissionOverwrite]:
@@ -84,6 +81,14 @@ class SetupCog(commands.Cog):
                 sent += 1
         return sent
 
+    def _missing_roles(self, guild: discord.Guild) -> list[str]:
+        return [
+            role_name
+            for roles in ROLE_GROUPS.values()
+            for role_name in roles
+            if discord.utils.get(guild.roles, name=role_name) is None
+        ]
+
     @app_commands.command(name="setup_devserver", description="Cria a estrutura completa do servidor DevVerse.")
     @admin_check()
     async def setup_devserver(self, interaction: discord.Interaction) -> None:
@@ -92,6 +97,17 @@ class SetupCog(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
+        missing_roles = self._missing_roles(guild)
+        if missing_roles:
+            await interaction.followup.send(
+                embed=make_embed(
+                    "Setup pausado",
+                    "O DevVerse nao cria cargos automaticamente. Crie os cargos no servidor e configure os IDs em `data/roles.json`.\n\n"
+                    "Cargos ausentes:\n" + ", ".join(missing_roles[:20]),
+                ),
+                ephemeral=True,
+            )
+            return
         for group, roles in ROLE_GROUPS.items():
             for role_name in roles:
                 await self._ensure_role(guild, group, role_name)
@@ -108,27 +124,30 @@ class SetupCog(commands.Cog):
         sent = await self._send_initial_messages(guild)
         await interaction.followup.send(embed=make_embed("Servidor DevVerse pronto", f"Estrutura criada/validada. Mensagens iniciais enviadas: {sent}."), ephemeral=True)
 
-    @app_commands.command(name="limpar_devserver", description="Remove somente cargos e canais criados pelo bot.")
+    @app_commands.command(name="limpar_devserver", description="Remove somente canais e categorias criados pelo bot.")
     @admin_check()
     async def limpar_devserver(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
             return
         view = ConfirmView(interaction.user.id)
-        await interaction.response.send_message(embed=make_embed("Confirmar limpeza", "Vou remover apenas itens registrados como criados pelo DevVerse Assistant."), view=view, ephemeral=True)
+        await interaction.response.send_message(embed=make_embed("Confirmar limpeza", "Vou remover apenas canais e categorias registrados como criados pelo DevVerse Assistant."), view=view, ephemeral=True)
         await view.wait()
         if not view.confirmed:
             await interaction.followup.send("Limpeza cancelada.", ephemeral=True)
             return
-        rows = await self.bot.db.fetchall("SELECT item_type, item_id FROM created_items WHERE guild_id = ? ORDER BY CASE item_type WHEN 'channel' THEN 1 WHEN 'category' THEN 2 ELSE 3 END", (interaction.guild.id,))
+        rows = await self.bot.db.fetchall(
+            "SELECT item_type, item_id FROM created_items WHERE guild_id = ? AND item_type IN ('channel', 'category') ORDER BY CASE item_type WHEN 'channel' THEN 1 WHEN 'category' THEN 2 ELSE 3 END",
+            (interaction.guild.id,),
+        )
         removed = 0
         for row in rows:
-            target = interaction.guild.get_channel(row["item_id"]) if row["item_type"] in {"channel", "category"} else interaction.guild.get_role(row["item_id"])
+            target = interaction.guild.get_channel(row["item_id"])
             if target:
                 await target.delete(reason="DevVerse cleanup")
                 removed += 1
-        await self.bot.db.execute("DELETE FROM created_items WHERE guild_id = ?", (interaction.guild.id,))
-        await interaction.followup.send(embed=make_embed("Limpeza concluída", f"Itens removidos: {removed}."), ephemeral=True)
+        await self.bot.db.execute("DELETE FROM created_items WHERE guild_id = ? AND item_type IN ('channel', 'category')", (interaction.guild.id,))
+        await interaction.followup.send(embed=make_embed("Limpeza concluida", f"Itens removidos: {removed}."), ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:
