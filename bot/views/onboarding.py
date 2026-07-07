@@ -127,17 +127,26 @@ def load_role_ids() -> dict[str, int]:
     return role_ids
 
 
+def configured_options(guild: discord.Guild | None, group_key: str) -> list[tuple[str, str, str]]:
+    role_ids = load_role_ids()
+    options = ONBOARDING_GROUPS[group_key]["options"]
+    if guild is None:
+        return options
+    return [option for option in options if guild.get_role(role_ids.get(option[0], 0))]
+
+
 class OnboardingState:
     def __init__(self) -> None:
         self.selected: dict[str, list[str]] = {}
 
 
 class OnboardingSelect(discord.ui.Select):
-    def __init__(self, group_key: str, states: dict[int, OnboardingState]) -> None:
+    def __init__(self, group_key: str, states: dict[int, OnboardingState], guild: discord.Guild | None = None) -> None:
         group = ONBOARDING_GROUPS[group_key]
+        group_options = configured_options(guild, group_key)
         options = [
             discord.SelectOption(label=label, value=key, emoji=emoji)
-            for key, emoji, label in group["options"]
+            for key, emoji, label in group_options
         ]
         super().__init__(
             placeholder=group["label"],
@@ -169,13 +178,15 @@ class ConfirmProfileButton(discord.ui.Button):
             await interaction.response.send_message("Escolha pelo menos uma opcao antes de confirmar.", ephemeral=True, delete_after=8)
             return
         role_ids = load_role_ids()
-        missing = [key for values in state.selected.values() for key in values if key not in role_ids]
+        missing = [key for values in state.selected.values() for key in values if key not in role_ids or interaction.guild.get_role(role_ids.get(key, 0)) is None]
+        warning = ""
         if missing:
-            await interaction.response.send_message(
-                "Alguns cargos nao estao configurados em `data/roles.json`: " + ", ".join(sorted(set(missing))),
-                ephemeral=True,
-            )
-            return
+            warning = "\nAlgumas escolhas ainda nao tem cargo configurado e foram ignoradas: " + ", ".join(sorted(set(missing)))
+            for values in state.selected.values():
+                values[:] = [key for key in values if key not in missing]
+            if not any(state.selected.values()):
+                await interaction.response.send_message(warning.strip(), ephemeral=True)
+                return
         all_configured_roles = [interaction.guild.get_role(role_id) for role_id in role_ids.values()]
         selected_keys = {key for values in state.selected.values() for key in values}
         selected_roles = [interaction.guild.get_role(role_ids[key]) for key in selected_keys]
@@ -186,7 +197,7 @@ class ConfirmProfileButton(discord.ui.Button):
         if selected_roles:
             await interaction.user.add_roles(*selected_roles, reason="DevVerse profile update")
         await self._save_profile(interaction, role_ids, state)
-        await interaction.response.send_message("Perfil atualizado com sucesso.", ephemeral=True, delete_after=8)
+        await interaction.response.send_message("Perfil atualizado com sucesso." + warning, ephemeral=True, delete_after=12)
 
     async def _save_profile(self, interaction: discord.Interaction, role_ids: dict[str, int], state: OnboardingState) -> None:
         await interaction.client.db.execute("DELETE FROM user_profiles WHERE user_id = ?", (interaction.user.id,))
@@ -199,10 +210,11 @@ class ConfirmProfileButton(discord.ui.Button):
 
 
 class OnboardingView(discord.ui.View):
-    def __init__(self, groups: list[str] | None = None) -> None:
+    def __init__(self, groups: list[str] | None = None, guild: discord.Guild | None = None) -> None:
         super().__init__(timeout=None)
         groups = groups or PRIMARY_ONBOARDING_GROUPS
         states: dict[int, OnboardingState] = {}
         for group_key in groups:
-            self.add_item(OnboardingSelect(group_key, states))
+            if configured_options(guild, group_key):
+                self.add_item(OnboardingSelect(group_key, states, guild))
         self.add_item(ConfirmProfileButton(states))

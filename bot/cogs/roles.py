@@ -31,18 +31,14 @@ class RolesCog(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         missing = self._missing_configured_roles(interaction.guild)
-        if missing:
-            await interaction.followup.send(
-                "Configure IDs validos em `data/roles.json` antes de publicar o painel. Chaves pendentes: "
-                + ", ".join(missing[:20]),
-                ephemeral=True,
-            )
-            return
         await self._ensure_area_channels(interaction.guild)
         channel = await self._ensure_welcome_channel(interaction.guild)
-        await channel.send(embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS))
-        await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS))
-        await interaction.followup.send(embed=make_embed("Sistema de cargos pronto", f"Painel enviado em {channel.mention}."), ephemeral=True)
+        await channel.send(embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS, interaction.guild))
+        await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS, interaction.guild))
+        description = f"Painel enviado em {channel.mention}."
+        if missing:
+            description += f"\n\nAlguns cargos ainda nao estao configurados e ficaram ocultos no painel.\nPendentes: {len(missing)}"
+        await interaction.followup.send(embed=make_embed("Sistema de cargos pronto", description), ephemeral=True)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
@@ -50,8 +46,8 @@ class RolesCog(commands.Cog):
         if not channel:
             return
         try:
-            await channel.send(content=member.mention, embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS), delete_after=3600)
-            await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS), delete_after=3600)
+            await channel.send(content=member.mention, embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS, member.guild), delete_after=3600)
+            await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS, member.guild), delete_after=3600)
         except discord.HTTPException:
             return
 
