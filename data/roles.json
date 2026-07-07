@@ -1,4 +1,5 @@
 {
+  "visitor": "ROLE_ID",
   "student": "ROLE_ID",
   "mentor": "ROLE_ID",
   "professional": "ROLE_ID",

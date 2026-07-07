@@ -206,7 +206,7 @@ class OnboardingSelect(discord.ui.Select):
 
 class ConfirmProfileButton(discord.ui.Button):
     def __init__(self, states: dict[int, OnboardingState]) -> None:
-        super().__init__(label="Confirmar", emoji="\u2705", style=discord.ButtonStyle.success, custom_id="devverse_profile_confirm")
+        super().__init__(label="Confirmar perfil", emoji="\u2705", style=discord.ButtonStyle.success, custom_id="devverse_profile_confirm")
         self.states = states
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -240,8 +240,28 @@ class ConfirmProfileButton(discord.ui.Button):
             await interaction.user.remove_roles(*removable, reason="DevVerse profile update")
         if selected_roles:
             await interaction.user.add_roles(*selected_roles, reason="DevVerse profile update")
+        visitor_role = await self._visitor_role(interaction)
+        if visitor_role and visitor_role in interaction.user.roles:
+            await interaction.user.remove_roles(visitor_role, reason="DevVerse onboarding completed")
         await self._save_profile(interaction, selected_role_by_key, state)
         await interaction.response.send_message("Perfil atualizado com sucesso." + warning, ephemeral=True, delete_after=12)
+
+    async def _visitor_role(self, interaction: discord.Interaction) -> discord.Role | None:
+        if not interaction.guild:
+            return None
+        row = await interaction.client.db.fetchone(
+            "SELECT visitor_role_id FROM guild_settings WHERE guild_id = ?",
+            (interaction.guild.id,),
+        )
+        role_id = row["visitor_role_id"] if row and row["visitor_role_id"] else load_role_ids().get("visitor")
+        role = interaction.guild.get_role(role_id) if role_id else None
+        if role:
+            return role
+        for candidate in ("👤 Visitante", "Visitante"):
+            role = discord.utils.get(interaction.guild.roles, name=candidate)
+            if role:
+                return role
+        return None
 
     async def _save_profile(self, interaction: discord.Interaction, selected_role_by_key: dict[str, discord.Role | None], state: OnboardingState) -> None:
         await interaction.client.db.execute("DELETE FROM user_profiles WHERE user_id = ?", (interaction.user.id,))

@@ -9,7 +9,7 @@ from discord.ext import commands
 from bot.permissions import admin_check
 from bot.templates import ROLE_PANEL_GROUPS
 from bot.utils import make_embed
-from bot.views.onboarding import EXTRA_ONBOARDING_GROUPS, ONBOARDING_GROUPS, PRIMARY_ONBOARDING_GROUPS, OnboardingView, resolve_role
+from bot.views.onboarding import EXTRA_ONBOARDING_GROUPS, ONBOARDING_GROUPS, PRIMARY_ONBOARDING_GROUPS, OnboardingView, load_role_ids, resolve_role
 from bot.views.role_menu import RolePanelView
 
 
@@ -27,16 +27,25 @@ class RolesCog(commands.Cog):
 
     @app_commands.command(name="setup_roles", description="Cria painel de cargos e mensagem de boas-vindas.")
     @admin_check()
-    async def setup_roles(self, interaction: discord.Interaction) -> None:
+    async def setup_roles(
+        self,
+        interaction: discord.Interaction,
+        cargo_visitante: discord.Role | None = None,
+        canal_entrada: discord.TextChannel | None = None,
+        canal_escolha: discord.TextChannel | None = None,
+    ) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         try:
             missing = self._missing_configured_roles(interaction.guild)
-            channel = await self._ensure_welcome_channel(interaction.guild)
-            await channel.send(embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS, interaction.guild))
-            await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS, interaction.guild))
+            visitor_role = cargo_visitante or self._visitor_role(interaction.guild)
+            welcome_channel = canal_entrada or await self._ensure_welcome_channel(interaction.guild)
+            profile_channel = canal_escolha or welcome_channel
+            await self._save_onboarding_settings(interaction.guild.id, visitor_role, welcome_channel, profile_channel)
+            await profile_channel.send(embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS, interaction.guild))
+            await profile_channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS, interaction.guild))
         except discord.Forbidden:
             await interaction.followup.send("Nao tenho permissao para criar/enviar o painel. Verifique `Manage Channels` e `Send Messages`.", ephemeral=True)
             return
@@ -54,14 +63,49 @@ class RolesCog(commands.Cog):
         except discord.HTTPException as exc:
             channel_status = f"Painel publicado. Nao consegui criar todos os canais de area: {exc}"
 
-        description = f"Painel enviado em {channel.mention}.\n{channel_status}"
+        permission_status = "Cargo Visitante nao configurado."
+        if visitor_role:
+            try:
+                await self._apply_visitor_permissions(interaction.guild, visitor_role, welcome_channel, profile_channel)
+                permission_status = f"Cargo visitante configurado: {visitor_role.mention}"
+            except discord.Forbidden:
+                permission_status = "Nao tenho permissao para ajustar canais do Visitante."
+            except discord.HTTPException as exc:
+                permission_status = f"Nao consegui ajustar todas as permissoes do Visitante: {exc}"
+
+        description = f"Painel enviado em {profile_channel.mention}.\n{channel_status}\n{permission_status}"
         if missing:
             description += f"\n\nAlguns cargos ainda nao estao configurados e ficaram ocultos no painel.\nPendentes: {len(missing)}"
         await interaction.followup.send(embed=make_embed("Sistema de cargos pronto", description), ephemeral=True)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
-        channel = self._find_welcome_channel(member.guild)
+        row = await self.bot.db.fetchone(
+            "SELECT visitor_role_id, welcome_channel_id, profile_channel_id FROM guild_settings WHERE guild_id = ?",
+            (member.guild.id,),
+        )
+        channel = self._configured_channel(member.guild, row, "welcome_channel_id") or self._find_welcome_channel(member.guild)
+        profile_channel = self._configured_channel(member.guild, row, "profile_channel_id") or channel
+        visitor_role = self._visitor_role(member.guild, row)
+        try:
+            if visitor_role:
+                await member.add_roles(visitor_role, reason="DevVerse new visitor")
+        except discord.HTTPException:
+            pass
+        try:
+            if profile_channel:
+                await member.send(
+                    "\n".join(
+                        [
+                            "Bem-vindo ao DevVerse!",
+                            "",
+                            "Para acessar a comunidade complete seu perfil no canal:",
+                            profile_channel.mention,
+                        ]
+                    )
+                )
+        except discord.HTTPException:
+            pass
         if not channel:
             return
         try:
@@ -83,6 +127,56 @@ class RolesCog(commands.Cog):
         if channel:
             return channel
         return await guild.create_text_channel("\U0001f44b\u30fbbem-vindo", reason="DevVerse setup_roles")
+
+    async def _save_onboarding_settings(
+        self,
+        guild_id: int,
+        visitor_role: discord.Role | None,
+        welcome_channel: discord.TextChannel,
+        profile_channel: discord.TextChannel,
+    ) -> None:
+        await self.bot.db.execute(
+            """
+            INSERT INTO guild_settings (guild_id, visitor_role_id, welcome_channel_id, profile_channel_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET
+                visitor_role_id = excluded.visitor_role_id,
+                welcome_channel_id = excluded.welcome_channel_id,
+                profile_channel_id = excluded.profile_channel_id
+            """,
+            (guild_id, visitor_role.id if visitor_role else None, welcome_channel.id, profile_channel.id),
+        )
+
+    def _visitor_role(self, guild: discord.Guild, row=None) -> discord.Role | None:
+        role_id = row["visitor_role_id"] if row and row["visitor_role_id"] else load_role_ids().get("visitor")
+        role = guild.get_role(role_id) if role_id else None
+        if role:
+            return role
+        for candidate in ("👤 Visitante", "Visitante"):
+            role = discord.utils.get(guild.roles, name=candidate)
+            if role:
+                return role
+        return None
+
+    def _configured_channel(self, guild: discord.Guild, row, column: str) -> discord.TextChannel | None:
+        if not row or not row[column]:
+            return None
+        channel = guild.get_channel(row[column])
+        return channel if isinstance(channel, discord.TextChannel) else None
+
+    async def _apply_visitor_permissions(
+        self,
+        guild: discord.Guild,
+        visitor_role: discord.Role,
+        welcome_channel: discord.TextChannel,
+        profile_channel: discord.TextChannel,
+    ) -> None:
+        allowed = {welcome_channel.id, profile_channel.id}
+        for channel in guild.text_channels:
+            if channel.id in allowed or "regras" in channel.name:
+                await channel.set_permissions(visitor_role, view_channel=True, read_message_history=True, send_messages=True)
+            else:
+                await channel.set_permissions(visitor_role, view_channel=False)
 
     async def _ensure_area_channels(self, guild: discord.Guild) -> None:
         role_ids = load_role_ids()

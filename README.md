@@ -229,6 +229,14 @@ O arquivo `data/roles.json` vem com placeholders `ROLE_ID`. Troque cada valor pe
 
 O comando `/setup_devserver` tambem nao cria cargos. Ele apenas valida se os cargos esperados existem e cria/valida canais e categorias do servidor.
 
+Para controlar entrada de novos membros, configure `visitor` em `data/roles.json` com o ID do cargo `Visitante` ja existente. Voce tambem pode informar no comando:
+
+```text
+/setup_roles cargo_visitante:@Visitante canal_entrada:#👋・bem-vindo canal_escolha:#🎯・escolha-perfil
+```
+
+Ao entrar, o membro recebe Visitante e uma DM apontando para o canal de perfil. Ao clicar em `Confirmar perfil`, o bot adiciona os cargos escolhidos e remove Visitante.
+
 Permissoes necessarias:
 
 ```text
