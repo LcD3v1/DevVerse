@@ -1,4 +1,7 @@
 {
+  "student": "ROLE_ID",
+  "mentor": "ROLE_ID",
+  "professional": "ROLE_ID",
   "beginner": "ROLE_ID",
   "basic": "ROLE_ID",
   "intermediate": "ROLE_ID",

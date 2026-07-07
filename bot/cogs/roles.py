@@ -9,7 +9,7 @@ from discord.ext import commands
 from bot.permissions import admin_check
 from bot.templates import ROLE_PANEL_GROUPS
 from bot.utils import make_embed
-from bot.views.onboarding import EXTRA_ONBOARDING_GROUPS, ONBOARDING_GROUPS, PRIMARY_ONBOARDING_GROUPS, OnboardingView, load_role_ids
+from bot.views.onboarding import EXTRA_ONBOARDING_GROUPS, ONBOARDING_GROUPS, PRIMARY_ONBOARDING_GROUPS, OnboardingView, resolve_role
 from bot.views.role_menu import RolePanelView
 
 
@@ -71,14 +71,10 @@ class RolesCog(commands.Cog):
             return
 
     def _missing_configured_roles(self, guild: discord.Guild) -> list[str]:
-        role_ids = load_role_ids()
         missing = []
         expected = [key for group in ONBOARDING_GROUPS.values() for key, _, _ in group["options"]]
         for key in expected:
-            if key not in role_ids:
-                missing.append(key)
-        for key, role_id in role_ids.items():
-            if guild.get_role(role_id) is None:
+            if resolve_role(guild, key) is None:
                 missing.append(key)
         return sorted(set(missing))
 
@@ -125,6 +121,11 @@ class RolesCog(commands.Cog):
                 [
                     "Configure seu perfil usando os menus abaixo.",
                     "",
+                    "Escolha seu perfil:",
+                    "\U0001f393 Estudante",
+                    "\U0001f9d1\u200d\U0001f3eb Mentor",
+                    "\U0001f4bc Profissional",
+                    "",
                     "Escolha seu nivel:",
                     "\U0001f331 Iniciante",
                     "\U0001f4d8 Basico",
@@ -132,7 +133,7 @@ class RolesCog(commands.Cog):
                     "\U0001f4d9 Avancado",
                     "\U0001f3c6 Expert",
                     "",
-                    "Escolha especialidades e linguagens.",
+                    "Escolha suas especialidades.",
                     "Depois clique em Confirmar neste painel.",
                 ]
             ),
@@ -144,6 +145,7 @@ class RolesCog(commands.Cog):
             "\n".join(
                 [
                     "Escolha frameworks, sistemas e objetivos.",
+                    "As linguagens tambem ficam disponiveis no painel de cargos completo.",
                     "Depois clique em Confirmar neste painel.",
                     "",
                     "Essas escolhas ajudam o DevVerse a direcionar canais, recursos e futuras recomendacoes por IA.",

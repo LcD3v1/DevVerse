@@ -11,6 +11,15 @@ from bot.config import BASE_DIR
 ROLES_CONFIG_PATH = BASE_DIR / "data" / "roles.json"
 
 ONBOARDING_GROUPS = {
+    "profile": {
+        "label": "Perfil",
+        "single": True,
+        "options": [
+            ("student", "\U0001f393", "Estudante"),
+            ("mentor", "\U0001f9d1\u200d\U0001f3eb", "Mentor"),
+            ("professional", "\U0001f4bc", "Profissional"),
+        ],
+    },
     "level": {
         "label": "Nivel de estudo",
         "single": True,
@@ -107,7 +116,7 @@ ONBOARDING_GROUPS = {
     },
 }
 
-PRIMARY_ONBOARDING_GROUPS = ["level", "specialties", "languages"]
+PRIMARY_ONBOARDING_GROUPS = ["profile", "level", "specialties", "languages"]
 EXTRA_ONBOARDING_GROUPS = ["frameworks", "systems", "goals"]
 
 
@@ -128,11 +137,42 @@ def load_role_ids() -> dict[str, int]:
 
 
 def configured_options(guild: discord.Guild | None, group_key: str) -> list[tuple[str, str, str]]:
+    return ONBOARDING_GROUPS[group_key]["options"]
+
+
+def resolve_role(guild: discord.Guild, key: str) -> discord.Role | None:
     role_ids = load_role_ids()
-    options = ONBOARDING_GROUPS[group_key]["options"]
-    if guild is None:
-        return options
-    return [option for option in options if guild.get_role(role_ids.get(option[0], 0))]
+    role_id = role_ids.get(key)
+    if role_id:
+        role = guild.get_role(role_id)
+        if role:
+            return role
+    option = _option_by_key(key)
+    if not option:
+        return None
+    _, emoji, label = option
+    candidates = {
+        label,
+        f"{emoji} {label}",
+        f"{emoji}\ufe0f {label}",
+        label.replace("Back-end", "Backend").replace("Front-end", "Frontend"),
+    }
+    lowered = {candidate.casefold() for candidate in candidates}
+    for role in guild.roles:
+        if role.name.casefold() in lowered:
+            return role
+    for role in guild.roles:
+        if label.casefold() in role.name.casefold():
+            return role
+    return None
+
+
+def _option_by_key(key: str) -> tuple[str, str, str] | None:
+    for group in ONBOARDING_GROUPS.values():
+        for option in group["options"]:
+            if option[0] == key:
+                return option
+    return None
 
 
 class OnboardingState:
@@ -177,8 +217,9 @@ class ConfirmProfileButton(discord.ui.Button):
         if not state or not state.selected:
             await interaction.response.send_message("Escolha pelo menos uma opcao antes de confirmar.", ephemeral=True, delete_after=8)
             return
-        role_ids = load_role_ids()
-        missing = [key for values in state.selected.values() for key in values if key not in role_ids or interaction.guild.get_role(role_ids.get(key, 0)) is None]
+        selected_keys = {key for values in state.selected.values() for key in values}
+        selected_role_by_key = {key: resolve_role(interaction.guild, key) for key in selected_keys}
+        missing = [key for key, role in selected_role_by_key.items() if role is None]
         warning = ""
         if missing:
             warning = "\nAlgumas escolhas ainda nao tem cargo configurado e foram ignoradas: " + ", ".join(sorted(set(missing)))
@@ -187,25 +228,31 @@ class ConfirmProfileButton(discord.ui.Button):
             if not any(state.selected.values()):
                 await interaction.response.send_message(warning.strip(), ephemeral=True)
                 return
-        all_configured_roles = [interaction.guild.get_role(role_id) for role_id in role_ids.values()]
         selected_keys = {key for values in state.selected.values() for key in values}
-        selected_roles = [interaction.guild.get_role(role_ids[key]) for key in selected_keys]
+        selected_role_by_key = {key: resolve_role(interaction.guild, key) for key in selected_keys}
+        selected_roles = list(selected_role_by_key.values())
         selected_roles = [role for role in selected_roles if role is not None]
+        group_keys = set(state.selected)
+        group_option_keys = [key for group_key in group_keys for key, _, _ in ONBOARDING_GROUPS[group_key]["options"]]
+        all_configured_roles = [resolve_role(interaction.guild, key) for key in group_option_keys]
         removable = [role for role in all_configured_roles if role and role in interaction.user.roles and role.id not in {r.id for r in selected_roles}]
         if removable:
             await interaction.user.remove_roles(*removable, reason="DevVerse profile update")
         if selected_roles:
             await interaction.user.add_roles(*selected_roles, reason="DevVerse profile update")
-        await self._save_profile(interaction, role_ids, state)
+        await self._save_profile(interaction, selected_role_by_key, state)
         await interaction.response.send_message("Perfil atualizado com sucesso." + warning, ephemeral=True, delete_after=12)
 
-    async def _save_profile(self, interaction: discord.Interaction, role_ids: dict[str, int], state: OnboardingState) -> None:
+    async def _save_profile(self, interaction: discord.Interaction, selected_role_by_key: dict[str, discord.Role | None], state: OnboardingState) -> None:
         await interaction.client.db.execute("DELETE FROM user_profiles WHERE user_id = ?", (interaction.user.id,))
         for category, keys in state.selected.items():
             for key in keys:
+                role = selected_role_by_key.get(key)
+                if role is None:
+                    continue
                 await interaction.client.db.execute(
                     "INSERT INTO user_profiles (user_id, category, role_id) VALUES (?, ?, ?)",
-                    (interaction.user.id, category, role_ids[key]),
+                    (interaction.user.id, category, role.id),
                 )
 
 
