@@ -20,6 +20,7 @@ logger = logging.getLogger("devverse.roles")
 class RolesCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self._auto_sync_done = False
         self.bot.add_view(OnboardingView(PRIMARY_ONBOARDING_GROUPS))
         self.bot.add_view(OnboardingView(EXTRA_ONBOARDING_GROUPS))
         self.bot.add_view(OnboardingPanelView())
@@ -29,6 +30,14 @@ class RolesCog(commands.Cog):
     async def rolepanel(self, interaction: discord.Interaction) -> None:
         embed = make_embed("Painel de Cargos", "Escolha suas especialidades, linguagens, frameworks, sistemas, objetivos e status.")
         await interaction.response.send_message(embed=embed, view=RolePanelView(ROLE_PANEL_GROUPS))
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        if self._auto_sync_done:
+            return
+        self._auto_sync_done = True
+        for guild in self.bot.guilds:
+            await self._sync_unprofiled_visitors(guild)
 
     @app_commands.command(name="sync_visitors", description="Aplica o cargo Visitante em membros sem perfil concluido.")
     @admin_check()
@@ -48,19 +57,7 @@ class RolesCog(commands.Cog):
         members = interaction.guild.members
         if not members:
             members = [member async for member in interaction.guild.fetch_members(limit=None)]
-        applied = 0
-        skipped = 0
-        for member in members:
-            if member.bot:
-                continue
-            has_profile = await self.bot.db.fetchone("SELECT 1 FROM user_profiles WHERE user_id = ? LIMIT 1", (member.id,))
-            if has_profile or visitor_role in member.roles:
-                skipped += 1
-                continue
-            if await self._assign_visitor(member, visitor_role):
-                applied += 1
-            else:
-                skipped += 1
+        applied, skipped = await self._sync_members_with_visitor(members, visitor_role)
         await interaction.followup.send(f"Visitante aplicado em {applied} membro(s). Ignorados: {skipped}.", ephemeral=True)
 
     @app_commands.command(name="setup_roles", description="Cria painel de cargos e mensagem de boas-vindas.")
@@ -202,6 +199,40 @@ class RolesCog(commands.Cog):
                 return role
         return None
 
+    async def _sync_unprofiled_visitors(self, guild: discord.Guild) -> tuple[int, int]:
+        row = await self.bot.db.fetchone(
+            "SELECT visitor_role_id FROM guild_settings WHERE guild_id = ?",
+            (guild.id,),
+        )
+        visitor_role = self._visitor_role(guild, row)
+        if not visitor_role:
+            logger.warning("Auto-sync Visitante ignorado: cargo Visitante nao encontrado no servidor %s", guild.id)
+            return 0, 0
+        members = guild.members
+        if not members:
+            try:
+                members = [member async for member in guild.fetch_members(limit=None)]
+            except discord.HTTPException:
+                logger.exception("Nao consegui buscar membros para sync de Visitante no servidor %s", guild.id)
+                return 0, 0
+        return await self._sync_members_with_visitor(members, visitor_role)
+
+    async def _sync_members_with_visitor(self, members: list[discord.Member], visitor_role: discord.Role) -> tuple[int, int]:
+        applied = 0
+        skipped = 0
+        for member in members:
+            if member.bot:
+                continue
+            has_profile = await self.bot.db.fetchone("SELECT 1 FROM user_profiles WHERE user_id = ? LIMIT 1", (member.id,))
+            if has_profile or visitor_role in member.roles:
+                skipped += 1
+                continue
+            if await self._assign_visitor(member, visitor_role):
+                applied += 1
+            else:
+                skipped += 1
+        return applied, skipped
+
     async def _assign_visitor(self, member: discord.Member, visitor_role: discord.Role) -> bool:
         if visitor_role in member.roles:
             return True
@@ -233,11 +264,17 @@ class RolesCog(commands.Cog):
         profile_channel: discord.TextChannel,
     ) -> None:
         allowed = {welcome_channel.id, profile_channel.id}
-        for channel in guild.text_channels:
-            if channel.id in allowed or "regras" in channel.name:
-                await channel.set_permissions(visitor_role, view_channel=True, read_message_history=True, send_messages=True)
+        for channel in guild.channels:
+            if channel.id in allowed or "regras" in channel.name or "escolha-perfil" in channel.name:
+                await channel.set_permissions(
+                    visitor_role,
+                    view_channel=True,
+                    read_message_history=True,
+                    send_messages=True,
+                    connect=True,
+                )
             else:
-                await channel.set_permissions(visitor_role, view_channel=False)
+                await channel.set_permissions(visitor_role, view_channel=False, connect=False)
 
     async def _ensure_area_channels(self, guild: discord.Guild) -> None:
         role_ids = load_role_ids()

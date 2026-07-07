@@ -237,6 +237,14 @@ Para controlar entrada de novos membros, configure `visitor` em `data/roles.json
 
 Ao entrar, o membro recebe Visitante e uma DM apontando para o canal de perfil. Ao clicar em `Confirmar perfil`, o bot adiciona os cargos escolhidos e remove Visitante.
 
+O `/setup_roles` aplica permissões do Visitante em canais de texto, categorias e canais de voz. Visitante fica liberado apenas nos canais de entrada/perfil/regras e bloqueado no restante.
+
+Se alguem entrou antes da configuracao ficar correta, use:
+
+```text
+/sync_visitors
+```
+
 Para o cargo Visitante ser aplicado automaticamente:
 
 - ative `SERVER MEMBERS INTENT` no portal do Discord Developer;
