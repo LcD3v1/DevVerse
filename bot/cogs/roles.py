@@ -18,6 +18,8 @@ logger = logging.getLogger("devverse.roles")
 
 
 class RolesCog(commands.Cog):
+    permissions_group = app_commands.Group(name="permissions", description="Diagnostico de permissoes do servidor.")
+
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self._auto_sync_done = False
@@ -30,6 +32,37 @@ class RolesCog(commands.Cog):
     async def rolepanel(self, interaction: discord.Interaction) -> None:
         embed = make_embed("Painel de Cargos", "Escolha suas especialidades, linguagens, frameworks, sistemas, objetivos e status.")
         await interaction.response.send_message(embed=embed, view=RolePanelView(ROLE_PANEL_GROUPS))
+
+    @permissions_group.command(name="check", description="Mostra quais canais um usuario consegue ou nao consegue ver.")
+    @admin_check()
+    async def permissions_check(self, interaction: discord.Interaction, usuario: discord.Member | None = None) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
+            return
+        member = usuario or interaction.user
+        if not isinstance(member, discord.Member):
+            await interaction.response.send_message("Usuario invalido.", ephemeral=True)
+            return
+        visible = []
+        hidden = []
+        for channel in interaction.guild.channels:
+            permissions = channel.permissions_for(member)
+            target = visible if permissions.view_channel else hidden
+            target.append(f"#{channel.name}")
+        roles = ", ".join(role.name for role in member.roles if role != interaction.guild.default_role) or "Nenhum"
+        description = "\n".join(
+            [
+                f"Usuario: {member.mention}",
+                f"Cargos atuais: {roles}",
+                "",
+                "Pode ver:",
+                "\n".join(visible[:25]) or "Nenhum canal",
+                "",
+                "Nao pode ver:",
+                "\n".join(hidden[:25]) or "Nenhum canal",
+            ]
+        )
+        await interaction.response.send_message(embed=make_embed("Permissions check", description), ephemeral=True)
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
@@ -78,6 +111,7 @@ class RolesCog(commands.Cog):
             visitor_role = cargo_visitante or self._visitor_role(interaction.guild)
             welcome_channel = canal_entrada or await self._ensure_welcome_channel(interaction.guild)
             profile_channel = canal_escolha or welcome_channel
+            await self._ensure_mod_logs(interaction.guild)
             await self._save_onboarding_settings(interaction.guild.id, visitor_role, welcome_channel, profile_channel)
             await self._cleanup_old_onboarding_messages(profile_channel)
             await profile_channel.send(embed=self._onboarding_embed(), view=OnboardingPanelView())
@@ -100,9 +134,17 @@ class RolesCog(commands.Cog):
 
         permission_status = "Cargo Visitante nao configurado."
         if visitor_role:
+            hierarchy_warning = self._hierarchy_warning(interaction.guild, visitor_role)
             try:
                 await self._apply_visitor_permissions(interaction.guild, visitor_role, welcome_channel, profile_channel)
                 permission_status = f"Cargo visitante configurado: {visitor_role.mention}"
+                if hierarchy_warning:
+                    permission_status += f"\n{hierarchy_warning}"
+                await self._log_mod(
+                    interaction.guild,
+                    "Permissoes de Visitante atualizadas",
+                    f"Cargo: {visitor_role.mention}\nEntrada: {welcome_channel.mention}\nPerfil: {profile_channel.mention}",
+                )
             except discord.Forbidden:
                 permission_status = "Nao tenho permissao para ajustar canais do Visitante."
             except discord.HTTPException as exc:
@@ -123,9 +165,15 @@ class RolesCog(commands.Cog):
         profile_channel = self._configured_channel(member.guild, row, "profile_channel_id") or channel
         visitor_role = self._visitor_role(member.guild, row)
         if visitor_role:
-            await self._assign_visitor(member, visitor_role)
+            applied = await self._assign_visitor(member, visitor_role)
+            await self._log_mod(
+                member.guild,
+                "Novo membro entrou",
+                f"Usuario: {member.mention}\nCargo aplicado: {visitor_role.mention if applied else 'Falhou'}",
+            )
         else:
             logger.warning("Cargo Visitante nao encontrado no servidor %s", member.guild.id)
+            await self._log_mod(member.guild, "Falha no Visitante", f"Usuario: {member.mention}\nErro: Cargo Visitante nao encontrado")
         try:
             if profile_channel:
                 await member.send(
@@ -154,6 +202,24 @@ class RolesCog(commands.Cog):
         if channel:
             return channel
         return await guild.create_text_channel("\U0001f44b\u30fbbem-vindo", reason="DevVerse setup_roles")
+
+    async def _ensure_mod_logs(self, guild: discord.Guild) -> discord.TextChannel | None:
+        channel = discord.utils.get(guild.text_channels, name="mod-logs")
+        if channel:
+            return channel
+        try:
+            return await guild.create_text_channel("mod-logs", reason="DevVerse moderation logs")
+        except discord.HTTPException:
+            return None
+
+    async def _log_mod(self, guild: discord.Guild, title: str, description: str) -> None:
+        channel = discord.utils.get(guild.text_channels, name="mod-logs")
+        if not channel:
+            return
+        try:
+            await channel.send(embed=make_embed(title, description))
+        except discord.HTTPException:
+            logger.exception("Falha ao enviar log de moderacao no servidor %s", guild.id)
 
     async def _cleanup_old_onboarding_messages(self, channel: discord.TextChannel) -> None:
         titles = {"\U0001f680 Bem-vindo ao DevVerse!", "Preferencias DevVerse", "Configurar perfil DevVerse"}
@@ -199,6 +265,16 @@ class RolesCog(commands.Cog):
                 return role
         return None
 
+    def _hierarchy_warning(self, guild: discord.Guild, visitor_role: discord.Role) -> str:
+        bot_member = guild.me
+        if not bot_member:
+            return "⚠️ Nao consegui verificar a hierarquia do bot."
+        if bot_member.top_role <= visitor_role:
+            return "⚠️ O cargo do bot precisa estar acima do cargo Visitante para conseguir aplicar cargos."
+        if not bot_member.guild_permissions.manage_roles:
+            return "⚠️ O bot precisa da permissao Manage Roles para aplicar cargos."
+        return ""
+
     async def _sync_unprofiled_visitors(self, guild: discord.Guild) -> tuple[int, int]:
         row = await self.bot.db.fetchone(
             "SELECT visitor_role_id FROM guild_settings WHERE guild_id = ?",
@@ -236,9 +312,15 @@ class RolesCog(commands.Cog):
     async def _assign_visitor(self, member: discord.Member, visitor_role: discord.Role) -> bool:
         if visitor_role in member.roles:
             return True
+        hierarchy_warning = self._hierarchy_warning(member.guild, visitor_role)
+        if hierarchy_warning:
+            logger.error(hierarchy_warning)
+            await self._log_mod(member.guild, "Falha ao aplicar Visitante", f"Usuario: {member.mention}\n{hierarchy_warning}")
+            return False
         try:
             await member.add_roles(visitor_role, reason="DevVerse new visitor")
             logger.info("Cargo Visitante aplicado em %s (%s)", member, member.id)
+            await self._log_mod(member.guild, "Cargo Visitante aplicado", f"Usuario: {member.mention}\nCargo: {visitor_role.mention}")
             return True
         except discord.Forbidden:
             logger.error(
@@ -248,6 +330,7 @@ class RolesCog(commands.Cog):
             )
         except discord.HTTPException:
             logger.exception("Falha HTTP ao aplicar Visitante em %s (%s)", member, member.id)
+            await self._log_mod(member.guild, "Falha ao aplicar Visitante", f"Usuario: {member.mention}\nErro HTTP ao aplicar cargo.")
         return False
 
     def _configured_channel(self, guild: discord.Guild, row, column: str) -> discord.TextChannel | None:
@@ -265,7 +348,8 @@ class RolesCog(commands.Cog):
     ) -> None:
         allowed = {welcome_channel.id, profile_channel.id}
         for channel in guild.channels:
-            if channel.id in allowed or "regras" in channel.name or "escolha-perfil" in channel.name:
+            if channel.id in allowed or "regras" in channel.name or "escolha-perfil" in channel.name or "inicio" in channel.name.casefold() or "início" in channel.name.casefold():
+                await channel.set_permissions(guild.default_role, view_channel=True, read_message_history=True)
                 await channel.set_permissions(
                     visitor_role,
                     view_channel=True,
@@ -274,7 +358,30 @@ class RolesCog(commands.Cog):
                     connect=True,
                 )
             else:
+                await channel.set_permissions(guild.default_role, view_channel=False, connect=False)
                 await channel.set_permissions(visitor_role, view_channel=False, connect=False)
+            await self._apply_area_role_permissions(channel)
+
+    async def _apply_area_role_permissions(self, channel: discord.abc.GuildChannel) -> None:
+        assert channel.guild
+        channel_name = channel.name.casefold()
+        area_map = {
+            "backend": ("backend", "back-end"),
+            "frontend": ("frontend", "front-end"),
+            "ai": ("ai", "ia", "machine-learning", "papers-ai"),
+            "cybersecurity": ("cyber", "security", "ctf"),
+            "cloud": ("cloud",),
+            "devops": ("devops",),
+            "data_science": ("data", "dados"),
+            "mobile": ("mobile",),
+            "blockchain": ("blockchain",),
+        }
+        for role_key, keywords in area_map.items():
+            if not any(keyword in channel_name for keyword in keywords):
+                continue
+            role = resolve_role(channel.guild, role_key)
+            if role:
+                await channel.set_permissions(role, view_channel=True, read_message_history=True, send_messages=True, connect=True)
 
     async def _ensure_area_channels(self, guild: discord.Guild) -> None:
         role_ids = load_role_ids()

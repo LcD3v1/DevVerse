@@ -245,9 +245,12 @@ class ConfirmProfileButton(discord.ui.Button):
         if selected_roles:
             await interaction.user.add_roles(*selected_roles, reason="DevVerse profile update")
         visitor_role = await self._visitor_role(interaction)
+        visitor_removed = False
         if visitor_role and visitor_role in interaction.user.roles:
             await interaction.user.remove_roles(visitor_role, reason="DevVerse onboarding completed")
+            visitor_removed = True
         await self._save_profile(interaction, selected_role_by_key, state)
+        await self._log_profile_completed(interaction, selected_roles, visitor_role if visitor_removed else None)
         await interaction.response.send_message("Perfil atualizado com sucesso." + warning, ephemeral=True, delete_after=12)
 
     async def _visitor_role(self, interaction: discord.Interaction) -> discord.Role | None:
@@ -281,6 +284,29 @@ class ConfirmProfileButton(discord.ui.Button):
                     "INSERT INTO user_profiles (user_id, category, role_id) VALUES (?, ?, ?)",
                     (interaction.user.id, category, role.id),
                 )
+
+    async def _log_profile_completed(
+        self,
+        interaction: discord.Interaction,
+        selected_roles: list[discord.Role],
+        removed_visitor: discord.Role | None,
+    ) -> None:
+        if not interaction.guild:
+            return
+        channel = discord.utils.get(interaction.guild.text_channels, name="mod-logs")
+        if not channel:
+            return
+        roles = ", ".join(role.mention for role in selected_roles) or "Nenhum"
+        removed = removed_visitor.mention if removed_visitor else "Nao estava com Visitante"
+        embed = discord.Embed(
+            title="Perfil concluido",
+            description=f"Usuario: {interaction.user.mention}\nCargos recebidos: {roles}\nCargo removido: {removed}",
+            color=discord.Color.green(),
+        )
+        try:
+            await channel.send(embed=embed)
+        except discord.HTTPException:
+            return
 
 
 class OnboardingView(discord.ui.View):
