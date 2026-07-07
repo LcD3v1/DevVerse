@@ -265,6 +265,9 @@ class ConfirmProfileButton(discord.ui.Button):
             role = discord.utils.get(interaction.guild.roles, name=candidate)
             if role:
                 return role
+        for role in interaction.guild.roles:
+            if "visitante" in role.name.casefold():
+                return role
         return None
 
     async def _save_profile(self, interaction: discord.Interaction, selected_role_by_key: dict[str, discord.Role | None], state: OnboardingState) -> None:

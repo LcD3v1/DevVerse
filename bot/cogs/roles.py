@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import discord
 from discord import app_commands
@@ -11,6 +12,9 @@ from bot.templates import ROLE_PANEL_GROUPS
 from bot.utils import make_embed
 from bot.views.onboarding import EXTRA_ONBOARDING_GROUPS, ONBOARDING_GROUPS, PRIMARY_ONBOARDING_GROUPS, OnboardingPanelView, OnboardingView, load_role_ids, resolve_role
 from bot.views.role_menu import RolePanelView
+
+
+logger = logging.getLogger("devverse.roles")
 
 
 class RolesCog(commands.Cog):
@@ -25,6 +29,39 @@ class RolesCog(commands.Cog):
     async def rolepanel(self, interaction: discord.Interaction) -> None:
         embed = make_embed("Painel de Cargos", "Escolha suas especialidades, linguagens, frameworks, sistemas, objetivos e status.")
         await interaction.response.send_message(embed=embed, view=RolePanelView(ROLE_PANEL_GROUPS))
+
+    @app_commands.command(name="sync_visitors", description="Aplica o cargo Visitante em membros sem perfil concluido.")
+    @admin_check()
+    async def sync_visitors(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        row = await self.bot.db.fetchone(
+            "SELECT visitor_role_id FROM guild_settings WHERE guild_id = ?",
+            (interaction.guild.id,),
+        )
+        visitor_role = self._visitor_role(interaction.guild, row)
+        if not visitor_role:
+            await interaction.followup.send("Cargo Visitante nao configurado/encontrado. Rode `/setup_roles cargo_visitante:@Visitante`.", ephemeral=True)
+            return
+        members = interaction.guild.members
+        if not members:
+            members = [member async for member in interaction.guild.fetch_members(limit=None)]
+        applied = 0
+        skipped = 0
+        for member in members:
+            if member.bot:
+                continue
+            has_profile = await self.bot.db.fetchone("SELECT 1 FROM user_profiles WHERE user_id = ? LIMIT 1", (member.id,))
+            if has_profile or visitor_role in member.roles:
+                skipped += 1
+                continue
+            if await self._assign_visitor(member, visitor_role):
+                applied += 1
+            else:
+                skipped += 1
+        await interaction.followup.send(f"Visitante aplicado em {applied} membro(s). Ignorados: {skipped}.", ephemeral=True)
 
     @app_commands.command(name="setup_roles", description="Cria painel de cargos e mensagem de boas-vindas.")
     @admin_check()
@@ -88,11 +125,10 @@ class RolesCog(commands.Cog):
         channel = self._configured_channel(member.guild, row, "welcome_channel_id") or self._find_welcome_channel(member.guild)
         profile_channel = self._configured_channel(member.guild, row, "profile_channel_id") or channel
         visitor_role = self._visitor_role(member.guild, row)
-        try:
-            if visitor_role:
-                await member.add_roles(visitor_role, reason="DevVerse new visitor")
-        except discord.HTTPException:
-            pass
+        if visitor_role:
+            await self._assign_visitor(member, visitor_role)
+        else:
+            logger.warning("Cargo Visitante nao encontrado no servidor %s", member.guild.id)
         try:
             if profile_channel:
                 await member.send(
@@ -161,7 +197,27 @@ class RolesCog(commands.Cog):
             role = discord.utils.get(guild.roles, name=candidate)
             if role:
                 return role
+        for role in guild.roles:
+            if "visitante" in role.name.casefold():
+                return role
         return None
+
+    async def _assign_visitor(self, member: discord.Member, visitor_role: discord.Role) -> bool:
+        if visitor_role in member.roles:
+            return True
+        try:
+            await member.add_roles(visitor_role, reason="DevVerse new visitor")
+            logger.info("Cargo Visitante aplicado em %s (%s)", member, member.id)
+            return True
+        except discord.Forbidden:
+            logger.error(
+                "Sem permissao/hierarquia para aplicar Visitante. Coloque o cargo do bot acima de %s no servidor %s.",
+                visitor_role.name,
+                member.guild.id,
+            )
+        except discord.HTTPException:
+            logger.exception("Falha HTTP ao aplicar Visitante em %s (%s)", member, member.id)
+        return False
 
     def _configured_channel(self, guild: discord.Guild, row, column: str) -> discord.TextChannel | None:
         if not row or not row[column]:
