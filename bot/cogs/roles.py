@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -30,12 +32,29 @@ class RolesCog(commands.Cog):
             await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
-        missing = self._missing_configured_roles(interaction.guild)
-        await self._ensure_area_channels(interaction.guild)
-        channel = await self._ensure_welcome_channel(interaction.guild)
-        await channel.send(embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS, interaction.guild))
-        await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS, interaction.guild))
-        description = f"Painel enviado em {channel.mention}."
+        try:
+            missing = self._missing_configured_roles(interaction.guild)
+            channel = await self._ensure_welcome_channel(interaction.guild)
+            await channel.send(embed=self._onboarding_embed(), view=OnboardingView(PRIMARY_ONBOARDING_GROUPS, interaction.guild))
+            await channel.send(embed=self._onboarding_extra_embed(), view=OnboardingView(EXTRA_ONBOARDING_GROUPS, interaction.guild))
+        except discord.Forbidden:
+            await interaction.followup.send("Nao tenho permissao para criar/enviar o painel. Verifique `Manage Channels` e `Send Messages`.", ephemeral=True)
+            return
+        except discord.HTTPException as exc:
+            await interaction.followup.send(f"Nao consegui publicar o painel agora. Erro do Discord: {exc}", ephemeral=True)
+            return
+
+        channel_status = "Canais de area validados."
+        try:
+            await asyncio.wait_for(self._ensure_area_channels(interaction.guild), timeout=20)
+        except asyncio.TimeoutError:
+            channel_status = "Painel publicado. A criacao de canais demorou demais e foi interrompida."
+        except discord.Forbidden:
+            channel_status = "Painel publicado. Nao tenho permissao para criar canais de area."
+        except discord.HTTPException as exc:
+            channel_status = f"Painel publicado. Nao consegui criar todos os canais de area: {exc}"
+
+        description = f"Painel enviado em {channel.mention}.\n{channel_status}"
         if missing:
             description += f"\n\nAlguns cargos ainda nao estao configurados e ficaram ocultos no painel.\nPendentes: {len(missing)}"
         await interaction.followup.send(embed=make_embed("Sistema de cargos pronto", description), ephemeral=True)
