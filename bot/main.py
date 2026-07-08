@@ -18,6 +18,7 @@ COGS = [
     "bot.cogs.pomodoro",
     "bot.cogs.tasks",
     "bot.cogs.study",
+    "bot.cogs.study_channels",
     "bot.cogs.profile",
     "bot.cogs.moderation",
     "bot.cogs.resources",
