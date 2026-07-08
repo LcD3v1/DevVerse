@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.permissions import admin_check
+from bot.services.audit_log import AuditReport, ensure_audit_channel, send_audit_report
 from bot.utils import make_embed
 from bot.views.onboarding import resolve_role
 
@@ -134,24 +135,56 @@ class StudyChannelsCog(commands.Cog):
             "categories_reused": 0,
             "channels_created": 0,
             "channels_reused": 0,
+            "items_changed": 0,
         }
         errors: list[str] = []
+        audit = AuditReport(title="Setup de canais de estudo", actor=f"{interaction.user} ({interaction.user.id})")
+        audit_channel = await ensure_audit_channel(interaction.guild)
+        if audit_channel:
+            audit.reused.append(f"Canal privado de auditoria: #{audit_channel.name}")
         for definition in STUDY_CATEGORIES:
             try:
-                category, created_category = await self._ensure_category(interaction.guild, definition)
+                category, category_action = await self._ensure_category(interaction.guild, definition)
+                created_category = category_action == "created"
                 stats["categories_created" if created_category else "categories_reused"] += 1
+                if created_category:
+                    audit.added.append(f"Categoria {definition.name}")
+                elif category_action == "changed":
+                    stats["items_changed"] += 1
+                    audit.changed.append(f"Permissoes da categoria {definition.name}")
+                else:
+                    audit.reused.append(f"Categoria {definition.name}")
                 first_channel: discord.TextChannel | None = None
                 for channel_name in definition.channels:
-                    channel, created_channel = await self._ensure_text_channel(interaction.guild, category, channel_name)
+                    channel, channel_action = await self._ensure_text_channel(interaction.guild, category, channel_name)
+                    created_channel = channel_action == "created"
                     if first_channel is None:
                         first_channel = channel
                     stats["channels_created" if created_channel else "channels_reused"] += 1
+                    if created_channel:
+                        audit.added.append(f"Canal #{channel.name}")
+                    elif channel_action == "changed":
+                        stats["items_changed"] += 1
+                        audit.changed.append(f"Canal #{channel.name} movido/sincronizado")
+                    else:
+                        audit.reused.append(f"Canal #{channel.name}")
                 if first_channel:
-                    await self._ensure_pinned_intro(first_channel, definition)
+                    intro_action = await self._ensure_pinned_intro(first_channel, definition)
+                    if intro_action == "created":
+                        audit.added.append(f"Mensagem fixa em #{first_channel.name}")
+                    elif intro_action == "changed":
+                        stats["items_changed"] += 1
+                        audit.changed.append(f"Mensagem fixa em #{first_channel.name}")
+                    else:
+                        audit.reused.append(f"Mensagem fixa em #{first_channel.name}")
             except discord.Forbidden:
-                errors.append(f"Sem permissao em {definition.name}")
+                message = f"Sem permissao em {definition.name}"
+                errors.append(message)
+                audit.errors.append(message)
             except discord.HTTPException as exc:
-                errors.append(f"{definition.name}: {exc}")
+                message = f"{definition.name}: {exc}"
+                errors.append(message)
+                audit.errors.append(message)
 
         elapsed = time.perf_counter() - started
         description = "\n".join(
@@ -161,36 +194,47 @@ class StudyChannelsCog(commands.Cog):
                 f"✅ Canais criados: {stats['channels_created']}",
                 f"✅ Canais reutilizados: {stats['channels_reused']}",
                 f"❌ Erros encontrados: {len(errors)}",
+                f"Alterados/sincronizados: {stats['items_changed']}",
+                "Removidos: 0",
                 f"Tempo de execucao: {elapsed:.2f}s",
             ]
         )
         if errors:
             description += "\n\n" + "\n".join(errors[:10])
+        audit.summary = (
+            f"Categorias previstas: {len(STUDY_CATEGORIES)} | "
+            f"Canais previstos: {sum(len(category.channels) for category in STUDY_CATEGORIES)} | "
+            f"Tempo: {elapsed:.2f}s"
+        )
+        await send_audit_report(interaction.guild, audit)
         await interaction.followup.send(embed=make_embed("Setup de estudos concluido", description), ephemeral=True)
 
-    async def _ensure_category(self, guild: discord.Guild, definition: StudyCategory) -> tuple[discord.CategoryChannel, bool]:
+    async def _ensure_category(self, guild: discord.Guild, definition: StudyCategory) -> tuple[discord.CategoryChannel, str]:
         existing = discord.utils.get(guild.categories, name=definition.name)
         role = self._resolve_category_role(guild, definition)
         overwrites = self._category_overwrites(guild, role)
         if existing:
-            await existing.edit(overwrites=overwrites, reason="DevVerse setup_study_channels permissions")
-            return existing, False
+            if self._overwrites_differ(existing.overwrites, overwrites):
+                await existing.edit(overwrites=overwrites, reason="DevVerse setup_study_channels permissions")
+                return existing, "changed"
+            return existing, "reused"
         category = await guild.create_category(definition.name, overwrites=overwrites, reason="DevVerse setup_study_channels")
-        return category, True
+        return category, "created"
 
     async def _ensure_text_channel(
         self,
         guild: discord.Guild,
         category: discord.CategoryChannel,
         name: str,
-    ) -> tuple[discord.TextChannel, bool]:
+    ) -> tuple[discord.TextChannel, str]:
         existing = discord.utils.get(guild.text_channels, name=name)
         if existing:
             if existing.category_id != category.id:
                 await existing.edit(category=category, sync_permissions=True, reason="DevVerse setup_study_channels organize")
-            return existing, False
+                return existing, "changed"
+            return existing, "reused"
         channel = await guild.create_text_channel(name, category=category, reason="DevVerse setup_study_channels")
-        return channel, True
+        return channel, "created"
 
     def _category_overwrites(
         self,
@@ -223,13 +267,14 @@ class StudyChannelsCog(commands.Cog):
                 return role
         return None
 
-    async def _ensure_pinned_intro(self, channel: discord.TextChannel, definition: StudyCategory) -> None:
+    async def _ensure_pinned_intro(self, channel: discord.TextChannel, definition: StudyCategory) -> str:
         title = f"Guia de estudo - {definition.name}"
         async for message in channel.history(limit=30):
             if message.author == channel.guild.me and message.embeds and message.embeds[0].title == title:
                 if not message.pinned:
                     await message.pin(reason="DevVerse setup_study_channels")
-                return
+                    return "changed"
+                return "reused"
         embed = make_embed(
             title,
             "\n".join(
@@ -248,6 +293,17 @@ class StudyChannelsCog(commands.Cog):
         )
         message = await channel.send(embed=embed)
         await message.pin(reason="DevVerse setup_study_channels")
+        return "created"
+
+    def _overwrites_differ(
+        self,
+        current: dict[discord.abc.Snowflake, discord.PermissionOverwrite],
+        expected: dict[discord.abc.Snowflake, discord.PermissionOverwrite],
+    ) -> bool:
+        for target, overwrite in expected.items():
+            if current.get(target) != overwrite:
+                return True
+        return False
 
 
 async def setup(bot: commands.Bot) -> None:

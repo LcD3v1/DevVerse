@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.permissions import admin_check
+from bot.services.audit_log import AuditReport, send_audit_report
 from bot.templates import INITIAL_MESSAGES, ROLE_GROUPS, SERVER_CATEGORIES
 from bot.utils import make_embed
 from bot.views.confirm_view import ConfirmView
@@ -108,13 +109,24 @@ class SetupCog(commands.Cog):
                 ephemeral=True,
             )
             return
+        audit = AuditReport(title="Setup DevVerse", actor=f"{interaction.user} ({interaction.user.id})")
         for group, roles in ROLE_GROUPS.items():
             for role_name in roles:
                 await self._ensure_role(guild, group, role_name)
         for category_name, channels in SERVER_CATEGORIES.items():
+            category_existed = discord.utils.get(guild.categories, name=category_name) is not None
             category = await self._ensure_category(guild, category_name)
+            if category_existed:
+                audit.reused.append(f"Categoria {category.name}")
+            else:
+                audit.added.append(f"Categoria {category.name}")
             for channel_name, kind in channels:
+                channel_existed = discord.utils.get(category.channels, name=channel_name) is not None
                 await self._ensure_channel(guild, category, channel_name, kind)
+                if channel_existed:
+                    audit.reused.append(f"Canal {channel_name}")
+                else:
+                    audit.added.append(f"Canal {channel_name}")
         ai_channel = discord.utils.get(guild.text_channels, name="🤖・ai-assistant")
         if ai_channel:
             await self.bot.db.execute(
@@ -122,6 +134,10 @@ class SetupCog(commands.Cog):
                 (guild.id, ai_channel.id),
             )
         sent = await self._send_initial_messages(guild)
+        if sent:
+            audit.added.append(f"Mensagens iniciais enviadas: {sent}")
+        audit.summary = "Estrutura principal criada/validada. Nenhum item removido por este comando."
+        await send_audit_report(guild, audit)
         await interaction.followup.send(embed=make_embed("Servidor DevVerse pronto", f"Estrutura criada/validada. Mensagens iniciais enviadas: {sent}."), ephemeral=True)
 
     @app_commands.command(name="limpar_devserver", description="Remove somente canais e categorias criados pelo bot.")
@@ -141,12 +157,16 @@ class SetupCog(commands.Cog):
             (interaction.guild.id,),
         )
         removed = 0
+        audit = AuditReport(title="Limpeza DevVerse", actor=f"{interaction.user} ({interaction.user.id})")
         for row in rows:
             target = interaction.guild.get_channel(row["item_id"])
             if target:
+                audit.removed.append(f"{row['item_type']}: {target.name}")
                 await target.delete(reason="DevVerse cleanup")
                 removed += 1
         await self.bot.db.execute("DELETE FROM created_items WHERE guild_id = ? AND item_type IN ('channel', 'category')", (interaction.guild.id,))
+        audit.summary = f"Itens removidos: {removed}"
+        await send_audit_report(interaction.guild, audit)
         await interaction.followup.send(embed=make_embed("Limpeza concluida", f"Itens removidos: {removed}."), ephemeral=True)
 
 
