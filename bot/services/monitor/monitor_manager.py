@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
 from discord.ext import commands
 
+from bot.services.monitor.freelance_monitor import FreelanceMonitor
 from bot.services.monitor.hackathon_monitor import HackathonMonitor
 from bot.services.monitor.jobs_monitor import JobsMonitor
 from bot.services.monitor.notification_service import NotificationService
@@ -26,6 +28,8 @@ class MonitorRunStats:
     duplicates: int = 0
     errors: int = 0
     missing_channel: bool = False
+    execution_time: float = 0.0
+    channel_ids: set[int] = field(default_factory=set)
     error_details: list[str] = field(default_factory=list)
 
 
@@ -35,6 +39,7 @@ class MonitorManager:
         self.client = httpx.AsyncClient(timeout=20, follow_redirects=True)
         self.jobs = JobsMonitor(self.client)
         self.hackathons = HackathonMonitor(self.client)
+        self.freelance = FreelanceMonitor(self.client)
         self.social = SocialMonitor(self.client)
         self.notifications = NotificationService(bot)
 
@@ -77,15 +82,17 @@ class MonitorManager:
                 stats.duplicates += result.duplicates
                 stats.errors += result.errors
                 stats.missing_channel = stats.missing_channel or result.missing_channel
+                stats.execution_time += result.execution_time
+                stats.channel_ids.update(result.channel_ids)
                 stats.error_details.extend(result.error_details)
                 await self._mark_checked(row["id"], error=self._format_error_details(result.error_details), result_count=result.found)
-                await self._record_monitor_log(row["type"], result.found, result.errors)
+                await self._record_monitor_log(row["type"], result)
             except Exception as exc:
                 stats.errors += 1
                 stats.error_details.append(str(exc)[:180])
                 logger.exception("Erro na execucao manual do monitor %s", row["id"])
                 await self._mark_checked(row["id"], str(exc)[:500], 0)
-                await self._record_monitor_log(row["type"], 0, 1)
+                await self._record_monitor_log(row["type"], MonitorRunStats(errors=1, error_details=[str(exc)[:180]]))
         return stats
 
     async def _run_with_retry(self, row) -> None:
@@ -94,16 +101,17 @@ class MonitorManager:
             try:
                 result = await self._run_monitor(row)
                 await self._mark_checked(row["id"], error=self._format_error_details(result.error_details), result_count=result.found)
-                await self._record_monitor_log(row["type"], result.found, result.errors)
+                await self._record_monitor_log(row["type"], result)
                 return
             except Exception as exc:
                 last_error = str(exc)[:500]
                 logger.exception("Erro no monitor %s tentativa %s", row["id"], attempt)
                 await asyncio.sleep(min(2 * attempt, 10))
         await self._mark_checked(row["id"], last_error)
-        await self._record_monitor_log(row["type"], 0, 1)
+        await self._record_monitor_log(row["type"], MonitorRunStats(errors=1, error_details=[last_error]))
 
     async def _run_monitor(self, row) -> MonitorRunStats:
+        started = time.perf_counter()
         monitor_type = row["type"]
         filters = self._load_filters(row["filters"])
         provider_error_details: list[str] = []
@@ -112,8 +120,19 @@ class MonitorManager:
             provider_error_details = list(self.jobs.last_errors)
         elif monitor_type == "hackathons":
             items = await self.hackathons.fetch(filters)
+        elif monitor_type == "freelance":
+            items = await self.freelance.fetch()
+            provider_error_details = list(self.freelance.last_errors)
         elif monitor_type in {"youtube", "instagram"}:
-            items = await self.social.fetch(monitor_type, row["source"])
+            try:
+                items = await self.social.fetch(monitor_type, row["source"])
+            except RuntimeError as exc:
+                return MonitorRunStats(
+                    errors=1,
+                    error_details=[str(exc)],
+                    execution_time=time.perf_counter() - started,
+                    channel_ids={row["channel_id"]},
+                )
         else:
             logger.warning("Tipo de monitor desconhecido: %s", monitor_type)
             return MonitorRunStats()
@@ -121,6 +140,7 @@ class MonitorManager:
         duplicates = 0
         errors = len(provider_error_details)
         missing_channel = False
+        delivery_errors = 0
         for item in items[:10]:
             await self._record_item_log(monitor_type, item, row["channel_id"], "found")
             result = await self.notifications.send(row["channel_id"], item)
@@ -133,18 +153,23 @@ class MonitorManager:
             elif result.status == "missing_channel":
                 missing_channel = True
                 errors += 1
+                delivery_errors += 1
                 await self._record_item_log(monitor_type, item, row["channel_id"], "missing_channel")
             else:
                 errors += 1
+                delivery_errors += 1
                 await self._record_item_log(monitor_type, item, row["channel_id"], "error")
         logger.info("Monitor %s encontrou %s item(ns), enviados %s", row["id"], len(items), sent)
+        execution_time = time.perf_counter() - started
         return MonitorRunStats(
             found=len(items),
-            new=sent + (errors - len(provider_error_details)),
+            new=sent + delivery_errors,
             sent=sent,
             duplicates=duplicates,
             errors=errors,
             missing_channel=missing_channel,
+            execution_time=execution_time,
+            channel_ids={row["channel_id"]},
             error_details=provider_error_details,
         )
 
@@ -166,10 +191,24 @@ class MonitorManager:
     def _format_error_details(self, details: list[str]) -> str:
         return "\n".join(details)[:500]
 
-    async def _record_monitor_log(self, monitor_type: str, items_found: int, errors: int) -> None:
+    async def _record_monitor_log(self, monitor_type: str, stats: MonitorRunStats) -> None:
         await self.bot.db.execute(
-            "INSERT INTO monitor_logs (type, items_found, errors) VALUES (?, ?, ?)",
-            (monitor_type, items_found, errors),
+            """
+            INSERT INTO monitor_logs
+                (type, monitor_type, items_found, items_new, items_sent, duplicates, errors, execution_time, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                monitor_type,
+                monitor_type,
+                stats.found,
+                stats.new,
+                stats.sent,
+                stats.duplicates,
+                stats.errors,
+                stats.execution_time,
+                self._format_error_details(stats.error_details),
+            ),
         )
 
     async def _record_item_log(self, monitor_type: str, item, channel_id: int, status: str) -> None:

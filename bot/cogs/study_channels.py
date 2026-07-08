@@ -200,6 +200,9 @@ class StudyChannelsCog(commands.Cog):
         overwrites: dict[discord.Role, discord.PermissionOverwrite] = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
         }
+        visitor_role = resolve_role(guild, "visitor")
+        if visitor_role:
+            overwrites[visitor_role] = discord.PermissionOverwrite(view_channel=False)
         if role:
             overwrites[role] = discord.PermissionOverwrite(
                 view_channel=True,

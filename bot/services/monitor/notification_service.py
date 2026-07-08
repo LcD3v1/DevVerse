@@ -27,7 +27,7 @@ class NotificationService:
 
     async def was_sent(self, item: MonitorItem) -> bool:
         unique_hash = item.metadata.get("unique_hash", "")
-        if item.type == "job" and unique_hash:
+        if unique_hash:
             row = await self.bot.db.fetchone(
                 "SELECT id FROM notifications WHERE type = ? AND unique_hash = ?",
                 (item.type, unique_hash),
@@ -77,8 +77,8 @@ class NotificationService:
             ),
         )
         await self.bot.db.execute(
-            "INSERT OR IGNORE INTO sent_notifications (type, external_id, url) VALUES (?, ?, ?)",
-            (item.type, item.metadata.get("external_id", item.url), item.url),
+            "INSERT OR IGNORE INTO sent_notifications (type, source, external_id, url, sent_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (item.type, item.metadata.get("source", item.source), item.metadata.get("external_id", item.url), item.url),
         )
         if item.type == "job":
             await self.bot.db.execute(
@@ -102,6 +102,18 @@ class NotificationService:
                 "INSERT OR IGNORE INTO social_posts (platform, creator, url) VALUES (?, ?, ?)",
                 (item.metadata.get("platform", ""), item.metadata.get("creator", ""), item.url),
             )
+        elif item.type == "freelance":
+            await self.bot.db.execute(
+                "INSERT OR IGNORE INTO freelance_opportunities (platform, external_id, title, url, budget, skills) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    item.metadata.get("platform", item.source),
+                    item.metadata.get("external_id", item.url),
+                    item.title,
+                    item.url,
+                    item.metadata.get("budget", ""),
+                    item.metadata.get("skills", ""),
+                ),
+            )
 
     def _build_embed(self, item: MonitorItem) -> discord.Embed:
         if item.type == "job":
@@ -124,14 +136,29 @@ class NotificationService:
             embed.add_field(name="Data", value=self._clean_field(item.metadata.get("date")), inline=True)
             embed.add_field(name="Formato", value=self._clean_field(item.metadata.get("format")), inline=True)
             embed.add_field(name="Inscricao", value=f"[Abrir pagina]({item.url})", inline=False)
+        elif item.type == "freelance":
+            embed = discord.Embed(title="\U0001f680 Novo freelance encontrado!", color=discord.Color.teal(), timestamp=utcnow())
+            embed.add_field(name="\U0001f4bc Projeto", value=self._clean_field(item.title), inline=False)
+            embed.add_field(name="\U0001f464 Cliente/Empresa", value=self._clean_field(item.metadata.get("client_or_company")), inline=True)
+            embed.add_field(name="\U0001f310 Plataforma", value=self._clean_field(item.metadata.get("platform", item.source)), inline=True)
+            embed.add_field(name="\U0001f4b0 Orcamento", value=self._clean_field(item.metadata.get("budget")), inline=True)
+            embed.add_field(name="\U0001f6e0 Skills", value=self._clean_field(item.metadata.get("skills")), inline=False)
+            embed.add_field(name="\U0001f4cd Local/Remoto", value=self._clean_field(item.metadata.get("location", "Remote")), inline=True)
+            embed.add_field(name="\U0001f517 Link", value=f"[Abrir oportunidade]({item.url})", inline=False)
+            embed.set_footer(text="DevVerse Freelance Monitor")
+            return embed
         else:
-            embed = discord.Embed(title="\U0001f680 DevVerse Alert", description="\U0001f3a5 Novo conteudo publicado!", color=discord.Color.orange(), timestamp=utcnow())
+            platform = item.metadata.get("platform", "").lower()
+            title = "\U0001f3a5 Novo conteudo no Instagram!" if platform == "instagram" else "\U0001f3a5 Novo conteudo publicado!"
+            embed = discord.Embed(title=title, color=discord.Color.orange(), timestamp=utcnow())
             embed.add_field(name="Criador", value=item.metadata.get("creator", "Nao informado"), inline=True)
             embed.add_field(name="Titulo", value=item.title, inline=False)
-            embed.add_field(name="Categoria", value=item.metadata.get("category", "Conteudo"), inline=True)
-            embed.add_field(name="Resumo", value=item.summary or "Resumo automatico preparado para IA futura.", inline=False)
-            embed.add_field(name="Link", value=item.url, inline=False)
-        embed.set_footer(text="DevVerse System")
+            if item.metadata.get("published_at"):
+                embed.add_field(name="Publicado", value=item.metadata.get("published_at", ""), inline=True)
+            if item.summary:
+                embed.add_field(name="Resumo", value=item.summary, inline=False)
+            embed.add_field(name="Ver post" if platform == "instagram" else "Link", value=f"[Abrir conteudo]({item.url})", inline=False)
+        embed.set_footer(text="DevVerse Social Monitor" if item.type == "social" else "DevVerse System")
         return embed
 
     def _clean_field(self, value: object, fallback: str = "Nao informado") -> str:

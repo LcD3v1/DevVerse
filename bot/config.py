@@ -56,7 +56,11 @@ class Settings:
     jobs_source_urls: tuple[str, ...]
     jobs_default_location: str
     hackathon_source_urls: tuple[str, ...]
+    freelance_source_urls: tuple[str, ...]
+    instagram_provider: str
     instagram_rss_template: str
+    apify_token: str
+    rss_bridge_url: str
 
 
 settings = Settings(
@@ -90,5 +94,13 @@ settings = Settings(
         for part in os.getenv("HACKATHON_SOURCE_URLS", "https://devpost.com/api/hackathons").split(",")
         if part.strip()
     ),
+    freelance_source_urls=tuple(
+        part.strip()
+        for part in os.getenv("FREELANCE_SOURCE_URLS", "https://remoteok.com/api").split(",")
+        if part.strip()
+    ),
+    instagram_provider=os.getenv("INSTAGRAM_PROVIDER", "disabled").strip().lower(),
     instagram_rss_template=os.getenv("INSTAGRAM_RSS_TEMPLATE", DEFAULT_INSTAGRAM_RSS_TEMPLATE) or DEFAULT_INSTAGRAM_RSS_TEMPLATE,
+    apify_token=os.getenv("APIFY_TOKEN", ""),
+    rss_bridge_url=os.getenv("RSS_BRIDGE_URL", "").rstrip("/"),
 )

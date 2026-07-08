@@ -62,6 +62,38 @@ class HackathonGroup(app_commands.Group):
         await self.cog.upsert_monitor(interaction, "hackathons", "internet", canal.id, categorias, frequencia_minutos)
 
 
+class FreelanceGroup(app_commands.Group):
+    def __init__(self, cog: "MonitorCog") -> None:
+        super().__init__(name="freelance", description="Configura monitoramento de oportunidades freelance.")
+        self.cog = cog
+
+    @app_commands.command(name="setup", description="Configura alertas automaticos de freelances.")
+    @app_commands.choices(
+        frequencia_minutos=[
+            app_commands.Choice(name="5 minutos", value=5),
+            app_commands.Choice(name="15 minutos", value=15),
+            app_commands.Choice(name="30 minutos", value=30),
+            app_commands.Choice(name="1 hora", value=60),
+        ]
+    )
+    @admin_check()
+    async def setup(self, interaction: discord.Interaction, canal: discord.TextChannel, frequencia_minutos: int = 5) -> None:
+        await self.cog.upsert_monitor(interaction, "freelance", "marketplaces", canal.id, "", frequencia_minutos)
+
+    @app_commands.command(name="interval", description="Altera o intervalo do monitor freelance.")
+    @app_commands.choices(
+        minutos=[
+            app_commands.Choice(name="5 minutos", value=5),
+            app_commands.Choice(name="15 minutos", value=15),
+            app_commands.Choice(name="30 minutos", value=30),
+            app_commands.Choice(name="1 hora", value=60),
+        ]
+    )
+    @admin_check()
+    async def interval(self, interaction: discord.Interaction, minutos: int) -> None:
+        await self.cog.update_monitor_interval(interaction, "freelance", minutos, "freelance")
+
+
 class MonitorGroup(app_commands.Group):
     def __init__(self, cog: "MonitorCog") -> None:
         super().__init__(name="monitor", description="Gerencia monitores externos.")
@@ -106,6 +138,11 @@ class MonitorGroup(app_commands.Group):
     async def run_instagram(self, interaction: discord.Interaction) -> None:
         await self.cog.run_monitor_now(interaction, "instagram", "\U0001f3a5 Executando monitor de Instagram...")
 
+    @run_group.command(name="freelance", description="Executa o monitor freelance agora.")
+    @admin_check()
+    async def run_freelance(self, interaction: discord.Interaction) -> None:
+        await self.cog.run_monitor_now(interaction, "freelance", "\U0001f680 Executando monitor freelance...")
+
 
 class MonitorCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -113,6 +150,7 @@ class MonitorCog(commands.Cog):
         self.manager = MonitorManager(bot)
         bot.tree.add_command(JobsGroup(self))
         bot.tree.add_command(HackathonGroup(self))
+        bot.tree.add_command(FreelanceGroup(self))
         bot.tree.add_command(MonitorGroup(self))
         if settings.monitor_enabled:
             self.monitor_task.change_interval(minutes=max(settings.monitor_interval_minutes, 1))
@@ -214,6 +252,19 @@ class MonitorCog(commands.Cog):
             return
         await interaction.response.send_message(embed=make_embed("Intervalo atualizado", f"Monitor de vagas rodando a cada {minutes} minutos."), ephemeral=True)
 
+    async def update_monitor_interval(self, interaction: discord.Interaction, monitor_type: str, minutes: int, label: str) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
+            return
+        cursor = await self.bot.db.execute(
+            "UPDATE monitors SET frequency_minutes = ? WHERE guild_id = ? AND type = ? AND enabled = 1",
+            (minutes, interaction.guild.id, monitor_type),
+        )
+        if not cursor.rowcount:
+            await interaction.response.send_message(f"Nenhum monitor {label} ativo. Use `/{label} setup` primeiro.", ephemeral=True)
+            return
+        await interaction.response.send_message(embed=make_embed("Intervalo atualizado", f"Monitor {label} rodando a cada {minutes} minutos."), ephemeral=True)
+
     async def run_monitor_now(self, interaction: discord.Interaction, monitor_type: str, title: str) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
@@ -221,6 +272,7 @@ class MonitorCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         stats = await self.manager.run_now(interaction.guild.id, monitor_type)
         channel_warning = "\n\n\u26a0\ufe0f Canal de destino nao configurado." if stats.missing_channel else ""
+        channel_line = "Canal destino:\n" + (", ".join(f"<#{channel_id}>" for channel_id in sorted(stats.channel_ids)) if stats.channel_ids else "nao configurado")
         error_details = ""
         if stats.error_details:
             details = "\n".join(f"- {detail}" for detail in stats.error_details[:3])
@@ -237,6 +289,8 @@ class MonitorCog(commands.Cog):
                         f"Enviados:\n{stats.sent}",
                         f"Duplicados:\n{stats.duplicates}",
                         f"Erros:\n{stats.errors}",
+                        f"Tempo de execucao:\n{stats.execution_time:.2f}s",
+                        channel_line,
                     ]
                 )
                 + channel_warning
@@ -256,7 +310,7 @@ class MonitorCog(commands.Cog):
         if not rows:
             await interaction.response.send_message(embed=make_embed("Monitor status", "Nenhuma fonte ativa."), ephemeral=True)
             return
-        sections = {"jobs": [], "hackathons": [], "content": []}
+        sections = {"jobs": [], "hackathons": [], "freelance": [], "content": []}
         for row in rows[:20]:
             error = row["last_error"] or "sem erros"
             last_check = row["last_check"] or "ainda nao executado"
@@ -291,7 +345,23 @@ class MonitorCog(commands.Cog):
                         ]
                     )
                 )
+            elif row["type"] == "freelance":
+                sections["freelance"].append(
+                    "\n".join(
+                        [
+                            "\U0001f680 Freelance",
+                            "Status: \U0001f7e2 Online",
+                            f"Canal: <#{row['channel_id']}>",
+                            f"Ultima execucao: {last_check}",
+                            f"Proxima execucao: {next_check}",
+                            f"Novas oportunidades encontradas: {row['last_result_count']}",
+                            f"Erros: {error}",
+                        ]
+                    )
+                )
             else:
+                if row["type"] == "instagram" and settings.instagram_provider == "disabled":
+                    error = "Instagram configurado, mas provider nao definido."
                 sections["content"].append(
                     "\n".join(
                         [
@@ -306,7 +376,7 @@ class MonitorCog(commands.Cog):
                     )
                 )
         lines = ["\U0001f4e1 DevVerse Monitor"]
-        for key in ("jobs", "hackathons", "content"):
+        for key in ("jobs", "hackathons", "freelance", "content"):
             lines.extend(sections[key] or [self._empty_status(key)])
         await interaction.response.send_message(embed=make_embed("Monitor status", "\n\n".join(lines)), ephemeral=True)
 
@@ -342,7 +412,7 @@ class MonitorCog(commands.Cog):
         return {"linkedin": "LinkedIn", "indeed": "Indeed", "existing": "Outras"}.get(source, source.title())
 
     def _empty_status(self, key: str) -> str:
-        labels = {"jobs": "\U0001f4bc Jobs", "hackathons": "\U0001f3c6 Hackathons", "content": "\U0001f3a5 Conteudo"}
+        labels = {"jobs": "\U0001f4bc Jobs", "hackathons": "\U0001f3c6 Hackathons", "freelance": "\U0001f680 Freelance", "content": "\U0001f3a5 Conteudo"}
         return f"{labels[key]}\nStatus: \U0001f534 Offline"
 
     def _next_execution(self, last_check: str | None, frequency_minutes: int) -> str:

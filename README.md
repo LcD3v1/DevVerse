@@ -17,6 +17,8 @@ Ele foi pensado para um grupo pequeno estudar programação, organizar projetos,
 - Moderação: `/warn`, `/warnings`, `/clear`, `/timeout`, `/kick`, `/ban`.
 - Módulo opcional GitHub com `/github_link`.
 - DevVerse Monitor: alertas automaticos de vagas, hackathons, YouTube e Instagram via feed configuravel.
+- `/setup_study_channels` cria categorias e canais de estudo faltantes com permissoes por cargo.
+- Monitor Freelance: `/freelance setup`, `/freelance interval` e `/monitor run freelance`.
 
 ## Requisitos
 
@@ -56,7 +58,11 @@ JOBS_DEFAULT_SOURCES=linkedin,indeed,existing
 JOBS_SOURCE_URLS=https://remoteok.com/api
 JOBS_DEFAULT_LOCATION=Worldwide
 HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
+FREELANCE_SOURCE_URLS=https://remoteok.com/api
+INSTAGRAM_PROVIDER=disabled
 INSTAGRAM_RSS_TEMPLATE=https://rsshub.app/instagram/user/{username}
+APIFY_TOKEN=
+RSS_BRIDGE_URL=
 ```
 
 ## Criar o bot no Discord
@@ -157,6 +163,7 @@ AI_PROVIDER=gateway
 DATABASE_PATH=data/database.sqlite3
 MONITOR_ENABLED=true
 MONITOR_INTERVAL_MINUTES=5
+INSTAGRAM_PROVIDER=disabled
 ```
 
 No Discord Developer Portal, deixe ativados:
@@ -167,6 +174,16 @@ Message Content Intent
 ```
 
 Se o log mostrar `Defina DISCORD_TOKEN`, a variável não foi configurada na hospedagem. Se o processo iniciar e cair durante o carregamento, veja o log do deploy para identificar o cog que falhou.
+
+Para testar monitores na ShardCloud:
+
+```text
+/jobs setup canal:#vagas fontes:linkedin,indeed,existing frequencia_minutos:5
+/freelance setup canal:#freelance frequencia_minutos:5
+/monitor run jobs
+/monitor run freelance
+/monitor status
+```
 
 ## DevVerse Monitor
 
@@ -187,6 +204,16 @@ Configurar hackathons:
 /hackathon setup canal:#hackathons categorias:ai,web3 frequencia_minutos:720
 ```
 
+Configurar freelance:
+
+```text
+/freelance setup canal:#freelance frequencia_minutos:5
+/freelance interval minutos:15
+/monitor run freelance
+```
+
+O monitor freelance busca oportunidades publicas em providers modulares como Upwork, Fiverr, Freelancer.com e feeds publicos/contract configurados em `FREELANCE_SOURCE_URLS`. Plataformas como Upwork e Fiverr podem limitar scraping; quando isso acontecer, o bot registra o erro no relatorio e continua nas outras fontes.
+
 Monitorar YouTube:
 
 ```text
@@ -201,13 +228,30 @@ Monitorar Instagram:
 /monitor instagram adicionar perfil:@perfil canal:#conteudo frequencia_minutos:120
 ```
 
-O Instagram nao fornece feed publico oficial sem credenciais. Por padrao, o bot usa RSSHub:
+O Instagram nao fornece feed publico oficial sem credenciais. Por padrao, o provider fica desativado para nao quebrar a ShardCloud:
 
 ```env
-INSTAGRAM_RSS_TEMPLATE=https://rsshub.app/instagram/user/{username}
+INSTAGRAM_PROVIDER=disabled
 ```
 
-Se a instancia publica do RSSHub limitar ou bloquear requisicoes, use uma instancia propria e troque apenas essa variavel.
+Providers suportados:
+
+```env
+INSTAGRAM_PROVIDER=rss_bridge
+INSTAGRAM_RSS_TEMPLATE=https://rsshub.app/instagram/user/{username}
+RSS_BRIDGE_URL=https://sua-instancia-rssbridge/instagram/{username}
+```
+
+```env
+INSTAGRAM_PROVIDER=apify
+APIFY_TOKEN=seu_token_apify
+```
+
+```env
+INSTAGRAM_PROVIDER=manual_public_page
+```
+
+RSS Bridge/RSSHub costuma ser o caminho mais estavel. `manual_public_page` depende da pagina publica do Instagram e pode ser bloqueado. Se `INSTAGRAM_PROVIDER=disabled`, o `/monitor status` e `/monitor run instagram` mostram erro amigavel em vez de derrubar o bot.
 
 Administracao:
 
@@ -216,8 +260,29 @@ Administracao:
 /monitor run jobs
 /monitor run hackathons
 /monitor run instagram
+/monitor run freelance
 /monitor remove monitor_id:1
 ```
+
+O `/monitor run` executa o teste real: busca, compara duplicidade, envia no canal configurado, salva em `sent_notifications` e registra `monitor_logs`.
+
+## Canais de estudo
+
+Use:
+
+```text
+/setup_study_channels
+```
+
+O comando cria somente categorias e canais que estiverem faltando. Categorias ja existentes sao reutilizadas. As permissoes aplicadas sao:
+
+```text
+@everyone: sem acesso
+Visitante: sem acesso
+Cargo correspondente: acesso liberado
+```
+
+Exemplos de mapeamento: `Python` ve `Python`, `Back-end` ve `Back-end`, `AI & Machine Learning` ve `Inteligencia Artificial`, `Git & GitHub` ve `Git/GitHub`. Ao criar cada categoria, o bot envia uma mensagem guia e fixa no primeiro canal.
 
 ## Onboarding e cargos
 
@@ -276,6 +341,7 @@ As fontes podem ser trocadas por `.env`:
 JOBS_SOURCE_URLS=https://remoteok.com/api
 JOBS_DEFAULT_LOCATION=Worldwide
 HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
+FREELANCE_SOURCE_URLS=https://remoteok.com/api
 MONITOR_INTERVAL_MINUTES=5
 ```
 

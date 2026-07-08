@@ -163,6 +163,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS sent_notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 type TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT '',
                 external_id TEXT NOT NULL DEFAULT '',
                 url TEXT NOT NULL DEFAULT '',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -171,8 +172,12 @@ class Database:
             CREATE TABLE IF NOT EXISTS monitor_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 type TEXT NOT NULL,
+                monitor_type TEXT NOT NULL DEFAULT '',
                 executed_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 items_found INTEGER NOT NULL DEFAULT 0,
+                items_new INTEGER NOT NULL DEFAULT 0,
+                items_sent INTEGER NOT NULL DEFAULT 0,
+                duplicates INTEGER NOT NULL DEFAULT 0,
                 errors INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS monitor_item_logs (
@@ -210,6 +215,17 @@ class Database:
                 date_found TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(platform, url)
             );
+            CREATE TABLE IF NOT EXISTS freelance_opportunities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                external_id TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                budget TEXT NOT NULL DEFAULT '',
+                skills TEXT NOT NULL DEFAULT '',
+                found_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(platform, external_id, url)
+            );
             CREATE TABLE IF NOT EXISTS content_tags (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content_id INTEGER NOT NULL,
@@ -234,6 +250,14 @@ class Database:
         await self._ensure_column("jobs", "source", "TEXT NOT NULL DEFAULT ''")
         await self._ensure_column("jobs", "external_id", "TEXT NOT NULL DEFAULT ''")
         await self._ensure_column("jobs", "unique_hash", "TEXT NOT NULL DEFAULT ''")
+        await self._ensure_column("sent_notifications", "source", "TEXT NOT NULL DEFAULT ''")
+        await self._ensure_column("sent_notifications", "sent_at", "TEXT")
+        await self._ensure_column("monitor_logs", "monitor_type", "TEXT NOT NULL DEFAULT ''")
+        await self._ensure_column("monitor_logs", "items_new", "INTEGER NOT NULL DEFAULT 0")
+        await self._ensure_column("monitor_logs", "items_sent", "INTEGER NOT NULL DEFAULT 0")
+        await self._ensure_column("monitor_logs", "duplicates", "INTEGER NOT NULL DEFAULT 0")
+        await self._ensure_column("monitor_logs", "execution_time", "REAL NOT NULL DEFAULT 0")
+        await self._ensure_column("monitor_logs", "error_message", "TEXT NOT NULL DEFAULT ''")
         await self._ensure_column("guild_settings", "visitor_role_id", "INTEGER")
         await self._ensure_column("guild_settings", "welcome_channel_id", "INTEGER")
         await self._ensure_column("guild_settings", "profile_channel_id", "INTEGER")
