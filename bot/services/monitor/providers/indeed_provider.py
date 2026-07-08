@@ -6,7 +6,6 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from bot.config import settings
 from bot.services.monitor.providers.base import JobProviderFilters, JobProviderResult
 
 
@@ -18,14 +17,17 @@ class IndeedJobsProvider:
         self.client = client
 
     async def fetch(self, filters: JobProviderFilters) -> list[JobProviderResult]:
-        query = quote_plus(" OR ".join(filters.get("areas", [])) or "software developer")
-        location = quote_plus(settings.jobs_default_location)
-        url = f"{self.base_url}?q={query}&l={location}"
-        response = await self.client.get(url, headers={"User-Agent": "DevVerseAssistant/1.0"})
-        response.raise_for_status()
-        return self._parse_rss(response.text)
+        jobs: list[JobProviderResult] = []
+        query = quote_plus("software developer OR backend OR frontend OR data OR devops OR cloud OR cybersecurity OR mobile")
+        for region, location in (("Estados Unidos", "United States"), ("Brasil", "Brazil"), ("Global", "Worldwide")):
+            url = f"{self.base_url}?q={query}&l={quote_plus(location)}"
+            response = await self.client.get(url, headers={"User-Agent": "DevVerseAssistant/1.0"})
+            response.raise_for_status()
+            source = "indeed_brasil" if region == "Brasil" else "indeed"
+            jobs.extend(self._parse_rss(response.text, region, source))
+        return jobs
 
-    def _parse_rss(self, xml_text: str) -> list[JobProviderResult]:
+    def _parse_rss(self, xml_text: str, region: str, source: str) -> list[JobProviderResult]:
         root = ET.fromstring(xml_text)
         jobs: list[JobProviderResult] = []
         for item in root.findall(".//item"):
@@ -43,8 +45,10 @@ class IndeedJobsProvider:
                     "remote": self._detect_model(f"{title} {description}"),
                     "technologies": [],
                     "url": url,
-                    "source": self.source,
+                    "source": source,
                     "external_id": self._external_id(url),
+                    "region": region,
+                    "seniority": self._detect_seniority(f"{title} {description}"),
                 }
             )
         return jobs
@@ -65,10 +69,21 @@ class IndeedJobsProvider:
             return "On-site"
         return "Nao informado"
 
+    def _detect_seniority(self, text: str) -> str:
+        lowered = text.lower()
+        if any(term in lowered for term in ("intern", "estagio", "estagiario", "trainee")):
+            return "Estagio"
+        if any(term in lowered for term in ("junior", "jr.", "jr ")):
+            return "Junior"
+        if any(term in lowered for term in ("pleno", "mid", "mid-level")):
+            return "Pleno"
+        if any(term in lowered for term in ("senior", "sr.", "staff", "lead")):
+            return "Senior"
+        return "Nao informado"
+
     def _external_id(self, url: str) -> str:
         match = re.search(r"jk=([A-Za-z0-9_-]+)", url)
         return match.group(1) if match else url
 
     def _strip_html(self, value: str) -> str:
         return re.sub(r"<[^>]+>", " ", value)
-

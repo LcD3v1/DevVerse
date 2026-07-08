@@ -6,12 +6,12 @@ from typing import Any
 
 import httpx
 
-from bot.config import settings
 from bot.services.monitor.models import MonitorItem
 from bot.services.monitor.providers.base import JobProviderFilters, JobProviderResult
 from bot.services.monitor.providers.existing_provider import ExistingJobsProvider
 from bot.services.monitor.providers.indeed_provider import IndeedJobsProvider
 from bot.services.monitor.providers.linkedin_provider import LinkedInJobsProvider
+from bot.services.monitor.providers.public_jobs_provider import PublicJobsProvider
 
 
 logger = logging.getLogger("devverse.monitor.jobs")
@@ -48,9 +48,25 @@ MODELS = {
 
 SOURCE_LABELS = {
     "linkedin": "LinkedIn",
+    "linkedin_brasil": "LinkedIn Brasil",
     "indeed": "Indeed",
+    "indeed_brasil": "Indeed Brasil",
     "existing": "Outras",
+    "programathor": "Programathor",
+    "geekhunter": "GeekHunter",
+    "revelo": "Revelo",
+    "trampos": "Trampos.co",
+    "coodesh": "Coodesh",
+    "gupy_tecnologia": "Gupy tecnologia",
+    "remotar": "Remotar",
+    "hipsters": "Hipsters.jobs",
+    "remoteok": "RemoteOK",
+    "weworkremotely": "WeWorkRemotely",
+    "wellfound": "Wellfound",
+    "public_jobs": "Fontes publicas",
 }
+
+DEFAULT_JOB_SOURCES = ("linkedin", "indeed", "public")
 
 
 class JobsMonitor:
@@ -61,11 +77,12 @@ class JobsMonitor:
             "linkedin": LinkedInJobsProvider(self.client),
             "indeed": IndeedJobsProvider(self.client),
             "existing": ExistingJobsProvider(self.client),
+            "public": PublicJobsProvider(self.client),
         }
 
     async def fetch(self, filters: list[str] | dict[str, Any]) -> list[MonitorItem]:
         config = self._normalize_filters(filters)
-        selected_sources = config.get("sources") or list(settings.jobs_default_sources)
+        selected_sources = config.get("sources") or list(DEFAULT_JOB_SOURCES)
         items: list[MonitorItem] = []
         self.last_errors = []
         provider_filters: JobProviderFilters = {
@@ -90,14 +107,14 @@ class JobsMonitor:
     def _normalize_filters(self, filters: list[str] | dict[str, Any]) -> dict[str, list[str]]:
         if isinstance(filters, dict):
             return {
-                "sources": self._normalize_sources(filters.get("sources", [])),
-                "areas": list(TECH_AREAS),
+                "sources": list(DEFAULT_JOB_SOURCES),
+                "areas": [],
                 "levels": [],
                 "models": [],
             }
         return {
-            "sources": list(settings.jobs_default_sources),
-            "areas": list(TECH_AREAS),
+            "sources": list(DEFAULT_JOB_SOURCES),
+            "areas": [],
             "levels": [],
             "models": [],
         }
@@ -105,8 +122,8 @@ class JobsMonitor:
     def _to_monitor_item(self, job: JobProviderResult, filters: dict[str, list[str]]) -> MonitorItem:
         source = job["source"]
         external_id = job.get("external_id") or job["url"]
-        unique_hash = self._unique_hash(source, external_id)
-        technologies = job.get("technologies") or self._matched_areas(self._search_text(job), filters.get("areas", []))
+        unique_hash = self._unique_hash(source, external_id, job["url"])
+        technologies = job.get("technologies") or self._matched_areas(self._search_text(job), list(TECH_AREAS))
         return MonitorItem(
             type="job",
             title=job["title"],
@@ -115,9 +132,11 @@ class JobsMonitor:
             summary="Analise de compatibilidade preparada para IA futura.",
             metadata={
                 "company": job.get("company", "Nao informado"),
+                "region": job.get("region", self._detect_region(job)),
                 "technologies": ", ".join(technologies) or "Nao informado",
                 "location": job.get("location", "Nao informado"),
                 "model": job.get("remote", "Nao informado"),
+                "seniority": job.get("seniority", self._detect_seniority(self._search_text(job))),
                 "source": source,
                 "source_label": SOURCE_LABELS.get(source, source.title()),
                 "external_id": external_id,
@@ -127,9 +146,7 @@ class JobsMonitor:
 
     def _matches(self, job: JobProviderResult, filters: dict[str, list[str]]) -> bool:
         text = self._search_text(job)
-        if not self._matched_areas(text, filters.get("areas", list(TECH_AREAS))):
-            return False
-        return True
+        return self._looks_like_tech_job(text)
 
     def _search_text(self, job: JobProviderResult) -> str:
         values = [
@@ -140,6 +157,21 @@ class JobsMonitor:
             " ".join(job.get("technologies", [])),
         ]
         return " ".join(values).lower()
+
+    def _looks_like_tech_job(self, text: str) -> bool:
+        return bool(self._matched_areas(text, list(TECH_AREAS))) or any(
+            term in text
+            for term in (
+                "developer",
+                "software",
+                "programador",
+                "programadora",
+                "tecnologia",
+                "engenheiro de software",
+                "qa",
+                "api",
+            )
+        )
 
     def _matched_areas(self, text: str, areas: list[str]) -> list[str]:
         selected = areas or list(TECH_AREAS)
@@ -158,7 +190,7 @@ class JobsMonitor:
         return False
 
     def _normalize_sources(self, values: Any) -> list[str]:
-        aliases = {"outras": "existing", "outros": "existing", "other": "existing", "existing": "existing"}
+        aliases = {"outras": "existing", "outros": "existing", "other": "existing", "existing": "existing", "publicas": "public", "public": "public"}
         sources = [aliases.get(value, value) for value in self._normalize_list(values)]
         return [source for source in sources if source in self.providers]
 
@@ -205,5 +237,24 @@ class JobsMonitor:
             raw_values = []
         return [str(value).strip().lower() for value in raw_values if str(value).strip()]
 
-    def _unique_hash(self, source: str, external_id: str) -> str:
-        return hashlib.sha256(f"{source}:{external_id}".encode("utf-8")).hexdigest()
+    def _detect_region(self, job: JobProviderResult) -> str:
+        text = self._search_text(job)
+        if "brasil" in text or "brazil" in text:
+            return "Brasil"
+        if "united states" in text or "usa" in text or "eua" in text:
+            return "Estados Unidos"
+        return "Global"
+
+    def _detect_seniority(self, text: str) -> str:
+        if any(term in text for term in ("intern", "estagio", "estágio", "estagiario", "estagiário", "trainee")):
+            return "Estagio"
+        if any(term in text for term in ("junior", "júnior", "jr.", "jr ")):
+            return "Junior"
+        if any(term in text for term in ("pleno", "mid", "mid-level")):
+            return "Pleno"
+        if any(term in text for term in ("senior", "sênior", "sr.", "staff", "lead")):
+            return "Senior"
+        return "Nao informado"
+
+    def _unique_hash(self, source: str, external_id: str, url: str) -> str:
+        return hashlib.sha256(f"{source}:{external_id}:{url}".encode("utf-8")).hexdigest()

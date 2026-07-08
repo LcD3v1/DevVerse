@@ -80,7 +80,7 @@ settings = Settings(
     monitor_interval_minutes=_int_or_default(os.getenv("MONITOR_INTERVAL_MINUTES"), 5),
     jobs_default_sources=tuple(
         part.strip().lower()
-        for part in os.getenv("JOBS_DEFAULT_SOURCES", "linkedin,indeed,existing").split(",")
+        for part in os.getenv("JOBS_DEFAULT_SOURCES", "linkedin,indeed,public").split(",")
         if part.strip()
     ),
     jobs_source_urls=tuple(

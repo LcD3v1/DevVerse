@@ -54,7 +54,7 @@ ENABLE_GITHUB=false
 GITHUB_WEBHOOK_SECRET=
 MONITOR_ENABLED=true
 MONITOR_INTERVAL_MINUTES=5
-JOBS_DEFAULT_SOURCES=linkedin,indeed,existing
+JOBS_DEFAULT_SOURCES=linkedin,indeed,public
 JOBS_SOURCE_URLS=https://remoteok.com/api
 JOBS_DEFAULT_LOCATION=Worldwide
 HACKATHON_SOURCE_URLS=https://devpost.com/api/hackathons
@@ -178,7 +178,7 @@ Se o log mostrar `Defina DISCORD_TOKEN`, a variável não foi configurada na hos
 Para testar monitores na ShardCloud:
 
 ```text
-/jobs setup canal:#vagas fontes:linkedin,indeed,existing frequencia_minutos:5
+/jobs setup canal:#vagas frequencia_minutos:5
 /freelance setup canal:#freelance frequencia_minutos:5
 /monitor run jobs
 /monitor run freelance
@@ -192,11 +192,13 @@ O DevVerse Monitor roda em segundo plano e envia notificacoes automaticas nos ca
 Configurar vagas:
 
 ```text
-/jobs setup canal:#vagas fontes:linkedin,indeed,existing frequencia_minutos:5
+/jobs setup canal:#vagas frequencia_minutos:5
 /jobs interval minutos:15
 ```
 
-As fontes suportadas sao `linkedin`, `indeed` e `existing`. O monitor de vagas nao limita por usuario: ele busca continuamente vagas de tecnologia em frontend, backend, full stack, mobile, data science, machine learning, artificial intelligence, cybersecurity, devops, cloud, blockchain e game development.
+O `/jobs setup` nao pergunta regiao, modalidade, senioridade nem area. Ele configura apenas o canal e o intervalo. O monitor busca automaticamente vagas de tecnologia nos Estados Unidos, Brasil e Global, aceitando remoto, hibrido, presencial, estagio, junior, pleno, senior, CLT, PJ, contrato e freelance quando aparecer nas fontes de vagas.
+
+Fontes automaticas: LinkedIn, Indeed, LinkedIn Brasil, Indeed Brasil, Programathor, GeekHunter, Revelo, Trampos.co, Coodesh, Gupy tecnologia, Remotar, Hipsters.jobs, RemoteOK, WeWorkRemotely e Wellfound.
 
 Configurar hackathons:
 

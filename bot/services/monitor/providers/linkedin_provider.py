@@ -6,7 +6,6 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from bot.config import settings
 from bot.services.monitor.providers.base import JobProviderFilters, JobProviderResult
 
 
@@ -18,14 +17,17 @@ class LinkedInJobsProvider:
         self.client = client
 
     async def fetch(self, filters: JobProviderFilters) -> list[JobProviderResult]:
-        query = quote_plus(" OR ".join(filters.get("areas", [])) or "software developer")
-        location = quote_plus(settings.jobs_default_location)
-        url = f"{self.base_url}?keywords={query}&location={location}&start=0"
-        response = await self.client.get(url, headers={"User-Agent": "DevVerseAssistant/1.0"})
-        response.raise_for_status()
-        return self._parse_cards(response.text)
+        jobs: list[JobProviderResult] = []
+        query = quote_plus("software developer OR backend OR frontend OR data OR devops OR cloud OR cybersecurity OR mobile")
+        for region, location in (("Estados Unidos", "United States"), ("Brasil", "Brazil"), ("Global", "Worldwide")):
+            url = f"{self.base_url}?keywords={query}&location={quote_plus(location)}&start=0"
+            response = await self.client.get(url, headers={"User-Agent": "DevVerseAssistant/1.0"})
+            response.raise_for_status()
+            source = "linkedin_brasil" if region == "Brasil" else "linkedin"
+            jobs.extend(self._parse_cards(response.text, region, source))
+        return jobs
 
-    def _parse_cards(self, html_text: str) -> list[JobProviderResult]:
+    def _parse_cards(self, html_text: str, region: str, source: str) -> list[JobProviderResult]:
         cards = re.split(r'<li\b', html_text)
         jobs: list[JobProviderResult] = []
         for card in cards:
@@ -45,8 +47,10 @@ class LinkedInJobsProvider:
                     "remote": self._detect_model(text),
                     "technologies": [],
                     "url": url.split("?")[0],
-                    "source": self.source,
+                    "source": source,
                     "external_id": external_id,
+                    "region": region,
+                    "seniority": self._detect_seniority(text),
                 }
             )
         return jobs
@@ -69,6 +73,18 @@ class LinkedInJobsProvider:
             return "Hybrid"
         if "on-site" in lowered or "onsite" in lowered or "presencial" in lowered:
             return "On-site"
+        return "Nao informado"
+
+    def _detect_seniority(self, text: str) -> str:
+        lowered = text.lower()
+        if any(term in lowered for term in ("intern", "estagio", "estagiario", "trainee")):
+            return "Estagio"
+        if any(term in lowered for term in ("junior", "jr.", "jr ")):
+            return "Junior"
+        if any(term in lowered for term in ("pleno", "mid", "mid-level")):
+            return "Pleno"
+        if any(term in lowered for term in ("senior", "sr.", "staff", "lead")):
+            return "Senior"
         return "Nao informado"
 
     def _external_id(self, url: str) -> str:

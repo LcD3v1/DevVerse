@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class JobProviderFilters(TypedDict, total=False):
@@ -18,4 +18,5 @@ class JobProviderResult(TypedDict):
     url: str
     source: str
     external_id: str
-
+    region: NotRequired[str]
+    seniority: NotRequired[str]

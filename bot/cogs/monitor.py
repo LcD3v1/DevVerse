@@ -32,10 +32,9 @@ class JobsGroup(app_commands.Group):
         self,
         interaction: discord.Interaction,
         canal: discord.TextChannel,
-        fontes: str = "linkedin,indeed,existing",
         frequencia_minutos: int = 5,
     ) -> None:
-        await self.cog.upsert_jobs_monitor(interaction, canal.id, fontes, frequencia_minutos)
+        await self.cog.upsert_jobs_monitor(interaction, canal.id, frequencia_minutos)
 
     @app_commands.command(name="interval", description="Altera o intervalo do monitor de vagas.")
     @app_commands.choices(
@@ -199,7 +198,6 @@ class MonitorCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         channel_id: int,
-        sources: str,
         frequency_minutes: int,
     ) -> None:
         if not interaction.guild:
@@ -207,10 +205,9 @@ class MonitorCog(commands.Cog):
             return
         frequency_minutes = max(frequency_minutes, 5)
         config = {
-            "sources": self._split_csv(sources) or ["linkedin", "indeed", "existing"],
-            "areas": "all_technology",
-            "levels": "all",
-            "models": "all",
+            "sources": ["linkedin", "indeed", "public"],
+            "regions": ["Estados Unidos", "Brasil", "Global"],
+            "filters": "none",
         }
         await self.bot.db.execute(
             """
@@ -230,8 +227,9 @@ class MonitorCog(commands.Cog):
                 "\n".join(
                     [
                         f"Canal: <#{channel_id}>",
-                        f"Fontes: {', '.join(config['sources'])}",
-                        "Areas: todas as areas de tecnologia",
+                        "Fontes: LinkedIn, Indeed e fontes publicas de tecnologia",
+                        "Regioes: Estados Unidos, Brasil e Global",
+                        "Filtros: nenhum",
                         f"Frequencia: {frequency_minutes} minutos.",
                     ]
                 ),
@@ -317,18 +315,21 @@ class MonitorCog(commands.Cog):
             next_check = self._next_execution(row["last_check"], row["frequency_minutes"])
             if row["type"] == "jobs":
                 config = self._load_json(row["filters"])
-                sources = config.get("sources", []) if isinstance(config, dict) else []
+                sources = config.get("sources", ["linkedin", "indeed", "public"]) if isinstance(config, dict) else ["linkedin", "indeed", "public"]
                 source_lines = "\n".join(f"\u2705 {self._source_label(source)}" for source in sources) or "todas"
+                latest_log = await self._latest_monitor_log("jobs")
                 sections["jobs"].append(
                     "\n".join(
                         [
-                            "\U0001f4bc Jobs",
-                            "Status: \U0001f7e2 Online",
-                            f"Fontes:\n{source_lines}",
-                            f"Ultima execucao: {last_check}",
-                            f"Proxima execucao: {next_check}",
-                            f"Novas vagas encontradas: {row['last_result_count']}",
-                            f"Erros: {error}",
+                            "\U0001f4bc Jobs Monitor",
+                            f"Canal: <#{row['channel_id']}>",
+                            f"Intervalo: {row['frequency_minutes']} minutos",
+                            f"Fontes ativas:\n{source_lines}",
+                            f"Ultima busca: {last_check}",
+                            f"Novas vagas: {latest_log.get('items_new', row['last_result_count'])}",
+                            f"Enviadas: {latest_log.get('items_sent', 0)}",
+                            f"Duplicadas: {latest_log.get('duplicates', 0)}",
+                            f"Erros: {latest_log.get('errors', 0) if latest_log else error}",
                         ]
                     )
                 )
@@ -409,7 +410,25 @@ class MonitorCog(commands.Cog):
             return {}
 
     def _source_label(self, source: str) -> str:
-        return {"linkedin": "LinkedIn", "indeed": "Indeed", "existing": "Outras"}.get(source, source.title())
+        return {
+            "linkedin": "LinkedIn + LinkedIn Brasil",
+            "indeed": "Indeed + Indeed Brasil",
+            "public": "Programathor, GeekHunter, Revelo, Trampos.co, Coodesh, Gupy tecnologia, Remotar, Hipsters.jobs, RemoteOK, WeWorkRemotely, Wellfound",
+            "existing": "Outras",
+        }.get(source, source.title())
+
+    async def _latest_monitor_log(self, monitor_type: str) -> dict[str, int]:
+        row = await self.bot.db.fetchone(
+            """
+            SELECT items_new, items_sent, duplicates, errors
+            FROM monitor_logs
+            WHERE type = ? OR monitor_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (monitor_type, monitor_type),
+        )
+        return dict(row) if row else {}
 
     def _empty_status(self, key: str) -> str:
         labels = {"jobs": "\U0001f4bc Jobs", "hackathons": "\U0001f3c6 Hackathons", "freelance": "\U0001f680 Freelance", "content": "\U0001f3a5 Conteudo"}
