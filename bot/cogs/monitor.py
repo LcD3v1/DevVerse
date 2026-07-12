@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 
 import discord
@@ -11,6 +12,9 @@ from bot.config import settings
 from bot.permissions import admin_check
 from bot.services.monitor.monitor_manager import MonitorManager
 from bot.utils import make_embed
+
+
+logger = logging.getLogger("devverse.monitor.cog")
 
 
 class JobsGroup(app_commands.Group):
@@ -154,10 +158,14 @@ class MonitorCog(commands.Cog):
         if settings.monitor_enabled:
             self.monitor_task.change_interval(minutes=max(settings.monitor_interval_minutes, 1))
             self.monitor_task.start()
+            logger.info("Task iniciada: monitor_task a cada %s minuto(s)", max(settings.monitor_interval_minutes, 1))
+        else:
+            logger.info("Task monitor_task desativada por configuracao")
 
     async def cog_unload(self) -> None:
         if self.monitor_task.is_running():
             self.monitor_task.cancel()
+            logger.info("Task cancelada: monitor_task")
         await self.manager.close()
 
     async def upsert_monitor(

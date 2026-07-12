@@ -26,6 +26,7 @@ COGS = [
     "bot.cogs.github",
     "bot.cogs.monitor",
     "bot.cogs.help",
+    "bot.cogs.diagnostics",
 ]
 
 
@@ -39,18 +40,29 @@ class DevVerseBot(commands.Bot):
         self.db = Database(settings.database_path)
 
     async def setup_hook(self) -> None:
+        logger = logging.getLogger("devverse.startup")
+        logger.info("Inicializando banco em %s", self.db.path)
         await self.db.connect()
         await self.db.setup()
+        logger.info("Banco pronto")
         for cog in COGS:
             if cog.endswith(".github") and not settings.enable_github:
+                logger.info("Cog ignorado por configuracao: %s", cog)
                 continue
-            await self.load_extension(cog)
+            try:
+                await self.load_extension(cog)
+                logger.info("Cog carregado: %s", cog)
+            except Exception:
+                logger.exception("Cog que falhou: %s", cog)
+                raise
         if settings.guild_id:
             guild = discord.Object(id=settings.guild_id)
             self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            logger.info("Comandos sincronizados na guild %s: %s", settings.guild_id, len(synced))
         else:
-            await self.tree.sync()
+            synced = await self.tree.sync()
+            logger.info("Comandos sincronizados globalmente: %s", len(synced))
 
     async def close(self) -> None:
         await self.db.close()

@@ -27,6 +27,7 @@ class RolesCog(commands.Cog):
         self.bot.add_view(OnboardingView(EXTRA_ONBOARDING_GROUPS))
         self.bot.add_view(OnboardingPanelView())
         self.bot.add_view(RolePanelView(ROLE_PANEL_GROUPS))
+        logger.info("Views persistentes de onboarding e cargos registradas")
 
     @app_commands.command(name="rolepanel", description="Cria o painel de autoatribuição de cargos.")
     @admin_check()
