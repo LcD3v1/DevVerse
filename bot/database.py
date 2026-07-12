@@ -233,6 +233,7 @@ class Database:
             );
             CREATE TABLE IF NOT EXISTS user_profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL DEFAULT 0,
                 user_id INTEGER NOT NULL,
                 category TEXT NOT NULL,
                 role_id INTEGER NOT NULL,
@@ -243,6 +244,7 @@ class Database:
         await self._rebuild_user_profiles_if_needed()
         await self._ensure_column("user_profiles", "category", "TEXT NOT NULL DEFAULT ''")
         await self._ensure_column("user_profiles", "role_id", "INTEGER NOT NULL DEFAULT 0")
+        await self._ensure_column("user_profiles", "guild_id", "INTEGER NOT NULL DEFAULT 0")
         await self._ensure_column("monitors", "last_result_count", "INTEGER NOT NULL DEFAULT 0")
         await self._ensure_column("notifications", "source", "TEXT NOT NULL DEFAULT ''")
         await self._ensure_column("notifications", "external_id", "TEXT NOT NULL DEFAULT ''")
@@ -263,6 +265,8 @@ class Database:
         await self._ensure_column("guild_settings", "profile_channel_id", "INTEGER")
         await self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_unique_hash ON notifications(unique_hash) WHERE unique_hash <> ''")
         await self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_unique_hash ON jobs(unique_hash) WHERE unique_hash <> ''")
+        await self._dedupe_user_profiles()
+        await self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_unique_role ON user_profiles(guild_id, user_id, category, role_id)")
         await self.conn.commit()
 
     async def _ensure_column(self, table: str, column: str, definition: str) -> None:
@@ -284,10 +288,24 @@ class Database:
             """
             CREATE TABLE user_profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL DEFAULT 0,
                 user_id INTEGER NOT NULL,
                 category TEXT NOT NULL,
                 role_id INTEGER NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+    async def _dedupe_user_profiles(self) -> None:
+        assert self.conn
+        await self.conn.execute(
+            """
+            DELETE FROM user_profiles
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM user_profiles
+                GROUP BY guild_id, user_id, category, role_id
             )
             """
         )

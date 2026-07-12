@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 import discord
 
 from bot.templates import ROLE_GROUPS
+
+
+logger = logging.getLogger("devverse.roles.panel")
 
 
 class RoleSelect(discord.ui.Select):
@@ -21,22 +26,41 @@ class RoleSelect(discord.ui.Select):
         if not isinstance(interaction.user, discord.Member) or not interaction.guild:
             await interaction.response.send_message("Use este menu dentro do servidor.", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)
         selected = set(self.values)
         available = {role.name: role for role in interaction.guild.roles if role.name in ROLE_GROUPS[self.group]}
         added, removed = [], []
+        skipped = []
+        bot_member = interaction.guild.me
         for role_name, role in available.items():
+            if role == interaction.guild.default_role or role.managed:
+                skipped.append(role.name)
+                continue
+            if not bot_member or not bot_member.guild_permissions.manage_roles or bot_member.top_role <= role:
+                skipped.append(role.name)
+                continue
             if role_name in selected and role not in interaction.user.roles:
-                await interaction.user.add_roles(role, reason="DevVerse role panel")
-                added.append(role.name)
+                try:
+                    await interaction.user.add_roles(role, reason="DevVerse role panel")
+                    added.append(role.name)
+                except (discord.Forbidden, discord.HTTPException):
+                    skipped.append(role.name)
+                    logger.exception("Falha ao adicionar cargo guild_id=%s user_id=%s role_id=%s", interaction.guild.id, interaction.user.id, role.id)
             elif role_name not in selected and role in interaction.user.roles:
-                await interaction.user.remove_roles(role, reason="DevVerse role panel")
-                removed.append(role.name)
+                try:
+                    await interaction.user.remove_roles(role, reason="DevVerse role panel")
+                    removed.append(role.name)
+                except (discord.Forbidden, discord.HTTPException):
+                    skipped.append(role.name)
+                    logger.exception("Falha ao remover cargo guild_id=%s user_id=%s role_id=%s", interaction.guild.id, interaction.user.id, role.id)
         parts = []
         if added:
             parts.append("Adicionados: " + ", ".join(added))
         if removed:
             parts.append("Removidos: " + ", ".join(removed))
-        await interaction.response.send_message("\n".join(parts) or "Nada mudou.", ephemeral=True)
+        if skipped:
+            parts.append("Nao aplicados: " + ", ".join(skipped[:8]))
+        await interaction.followup.send("\n".join(parts) or "Nada mudou.", ephemeral=True)
 
 
 class RolePanelView(discord.ui.View):

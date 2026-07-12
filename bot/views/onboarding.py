@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import discord
@@ -9,6 +10,7 @@ from bot.config import BASE_DIR
 
 
 ROLES_CONFIG_PATH = BASE_DIR / "data" / "roles.json"
+logger = logging.getLogger("devverse.roles.onboarding")
 
 ONBOARDING_GROUPS = {
     "profile": {
@@ -118,7 +120,7 @@ ONBOARDING_GROUPS = {
 
 PRIMARY_ONBOARDING_GROUPS = ["profile", "level", "specialties", "languages"]
 EXTRA_ONBOARDING_GROUPS = ["frameworks", "systems", "goals"]
-ONBOARDING_STATES: dict[int, "OnboardingState"] = {}
+ONBOARDING_STATES: dict[int, dict[int, "OnboardingState"]] = {}
 
 
 def load_role_ids() -> dict[str, int]:
@@ -182,7 +184,7 @@ class OnboardingState:
 
 
 class OnboardingSelect(discord.ui.Select):
-    def __init__(self, group_key: str, states: dict[int, OnboardingState], guild: discord.Guild | None = None) -> None:
+    def __init__(self, group_key: str, states: dict[int, dict[int, OnboardingState]], guild: discord.Guild | None = None) -> None:
         group = ONBOARDING_GROUPS[group_key]
         group_options = configured_options(guild, group_key)
         options = [
@@ -191,7 +193,7 @@ class OnboardingSelect(discord.ui.Select):
         ]
         super().__init__(
             placeholder=group["label"],
-            min_values=1,
+            min_values=1 if group["single"] else 0,
             max_values=1 if group["single"] else min(25, len(options)),
             options=options,
             custom_id=f"devverse_profile_select:{group_key}",
@@ -200,13 +202,42 @@ class OnboardingSelect(discord.ui.Select):
         self.states = states
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        state = self.states.setdefault(interaction.user.id, OnboardingState())
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use este menu dentro do servidor.", ephemeral=True)
+            return
+        state = self.states.setdefault(interaction.guild.id, {}).setdefault(interaction.user.id, OnboardingState())
         state.selected[self.group_key] = list(self.values)
-        await interaction.response.send_message("Selecao salva. Clique em Confirmar para aplicar os cargos.", ephemeral=True, delete_after=8)
+        current = self._current_role_labels(interaction.user, self.group_key)
+        selected = self._selected_labels(self.group_key, self.values)
+        description = "\n".join(
+            [
+                f"Categoria: {ONBOARDING_GROUPS[self.group_key]['label']}",
+                f"Cargos atuais desta categoria: {', '.join(current) if current else 'Nenhum'}",
+                f"Nova selecao pendente: {', '.join(selected) if selected else 'Nenhum'}",
+                "",
+                "Clique em Confirmar perfil para aplicar. Voce pode voltar aqui e editar quando quiser.",
+            ]
+        )
+        await interaction.response.send_message(description, ephemeral=True, delete_after=20)
+
+    def _current_role_labels(self, member: discord.Member, group_key: str) -> list[str]:
+        labels = []
+        for key, _, label in ONBOARDING_GROUPS[group_key]["options"]:
+            role = resolve_role(member.guild, key)
+            if role and role in member.roles:
+                labels.append(label)
+        return labels
+
+    def _selected_labels(self, group_key: str, values: list[str]) -> list[str]:
+        labels = []
+        options = {key: label for key, _, label in ONBOARDING_GROUPS[group_key]["options"]}
+        for key in values:
+            labels.append(options.get(key, key))
+        return labels
 
 
 class ConfirmProfileButton(discord.ui.Button):
-    def __init__(self, states: dict[int, OnboardingState]) -> None:
+    def __init__(self, states: dict[int, dict[int, OnboardingState]]) -> None:
         super().__init__(label="Confirmar perfil", emoji="\u2705", style=discord.ButtonStyle.success, custom_id="devverse_profile_confirm")
         self.states = states
 
@@ -214,44 +245,158 @@ class ConfirmProfileButton(discord.ui.Button):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Use dentro do servidor.", ephemeral=True)
             return
-        state = self.states.get(interaction.user.id)
+        await self._safe_defer(interaction)
+        state = self.states.get(interaction.guild.id, {}).get(interaction.user.id)
         if not state or not state.selected:
-            await interaction.response.send_message("Escolha pelo menos uma opcao antes de confirmar.", ephemeral=True, delete_after=8)
+            await interaction.followup.send("Nenhuma alteracao pendente. Use os menus para editar seu perfil.", ephemeral=True)
             return
-        if not state.selected.get("profile"):
-            await interaction.response.send_message("Escolha seu perfil antes de confirmar.", ephemeral=True, delete_after=8)
+        try:
+            result = await self._apply_profile_update(interaction, state)
+        except discord.Forbidden:
+            logger.exception("Forbidden ao atualizar perfil guild_id=%s user_id=%s selected=%s", interaction.guild.id, interaction.user.id, state.selected)
+            await interaction.followup.send(
+                "Nao foi possivel aplicar alguns cargos. Verifique se o cargo do bot esta acima dos cargos selecionados.",
+                ephemeral=True,
+            )
             return
-        selected_keys = {key for values in state.selected.values() for key in values}
-        selected_role_by_key = {key: resolve_role(interaction.guild, key) for key in selected_keys}
-        missing = [key for key, role in selected_role_by_key.items() if role is None]
-        warning = ""
-        if missing:
-            warning = "\nAlgumas escolhas ainda nao tem cargo configurado e foram ignoradas: " + ", ".join(sorted(set(missing)))
-            for values in state.selected.values():
-                values[:] = [key for key in values if key not in missing]
-            if not any(state.selected.values()):
-                await interaction.response.send_message(warning.strip(), ephemeral=True)
-                return
-        selected_keys = {key for values in state.selected.values() for key in values}
-        selected_role_by_key = {key: resolve_role(interaction.guild, key) for key in selected_keys}
-        selected_roles = list(selected_role_by_key.values())
-        selected_roles = [role for role in selected_roles if role is not None]
-        group_keys = set(state.selected)
-        group_option_keys = [key for group_key in group_keys for key, _, _ in ONBOARDING_GROUPS[group_key]["options"]]
-        all_configured_roles = [resolve_role(interaction.guild, key) for key in group_option_keys]
-        removable = [role for role in all_configured_roles if role and role in interaction.user.roles and role.id not in {r.id for r in selected_roles}]
-        if removable:
-            await interaction.user.remove_roles(*removable, reason="DevVerse profile update")
-        if selected_roles:
-            await interaction.user.add_roles(*selected_roles, reason="DevVerse profile update")
+        except discord.NotFound:
+            logger.exception("Membro/cargo nao encontrado ao atualizar perfil guild_id=%s user_id=%s selected=%s", interaction.guild.id, interaction.user.id, state.selected)
+            await interaction.followup.send("Nao consegui atualizar seu perfil agora. Tente novamente em alguns segundos.", ephemeral=True)
+            return
+        except discord.HTTPException:
+            logger.exception("Erro HTTP ao atualizar perfil guild_id=%s user_id=%s selected=%s", interaction.guild.id, interaction.user.id, state.selected)
+            await interaction.followup.send("O Discord recusou a atualizacao agora. Tente novamente em instantes.", ephemeral=True)
+            return
+        except Exception:
+            logger.exception("Erro inesperado ao atualizar perfil guild_id=%s user_id=%s selected=%s", interaction.guild.id, interaction.user.id, state.selected)
+            await interaction.followup.send("Nao foi possivel salvar seu perfil agora. A equipe ja pode verificar os logs.", ephemeral=True)
+            return
+        self.states.get(interaction.guild.id, {}).pop(interaction.user.id, None)
+        await self._log_profile_completed(interaction, result["added_roles"], result["removed_roles"], result["visitor_removed"])
+        await interaction.followup.send(self._summary_message(result), ephemeral=True)
+
+    async def _safe_defer(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+    async def _apply_profile_update(self, interaction: discord.Interaction, state: OnboardingState) -> dict[str, object]:
+        guild = interaction.guild
+        member = interaction.user
+        assert guild and isinstance(member, discord.Member)
+        added_roles: list[discord.Role] = []
+        removed_roles: list[discord.Role] = []
+        skipped: list[str] = []
+        selected_roles_by_category: dict[str, list[discord.Role]] = {}
+        future_role_ids = {role.id for role in member.roles}
+        for category, selected_keys in state.selected.items():
+            valid_selected, invalid = self._resolve_safe_roles(guild, category, selected_keys)
+            skipped.extend(invalid)
+            selected_roles_by_category[category] = valid_selected
+            category_roles = [
+                role
+                for role in (resolve_role(guild, key) for key, _, _ in ONBOARDING_GROUPS[category]["options"])
+                if role and self._role_can_be_managed(guild, role, strict=False)[0]
+            ]
+            selected_ids = {role.id for role in valid_selected}
+            to_add = [role for role in valid_selected if role not in member.roles]
+            to_remove = [role for role in category_roles if role in member.roles and role.id not in selected_ids]
+            if to_remove:
+                await member.remove_roles(*to_remove, reason="Atualizacao do perfil DevVerse")
+                removed_roles.extend(to_remove)
+                future_role_ids.difference_update(role.id for role in to_remove)
+            if to_add:
+                await member.add_roles(*to_add, reason="Atualizacao do perfil DevVerse")
+                added_roles.extend(to_add)
+                future_role_ids.update(role.id for role in to_add)
+            await self._save_category_profile(interaction, category, valid_selected)
+            logger.info(
+                "Perfil atualizado guild_id=%s user_id=%s categoria=%s solicitados=%s adicionados=%s removidos=%s",
+                guild.id,
+                member.id,
+                category,
+                selected_keys,
+                [role.id for role in to_add],
+                [role.id for role in to_remove],
+            )
+        minimum_ok, missing_minimum = self._minimum_profile_status_by_ids(guild, future_role_ids)
+        visitor_removed = await self._maybe_remove_visitor(interaction, minimum_ok)
+        return {
+            "added_roles": added_roles,
+            "removed_roles": removed_roles,
+            "selected_roles_by_category": selected_roles_by_category,
+            "visitor_removed": visitor_removed,
+            "minimum_ok": minimum_ok,
+            "missing_minimum": missing_minimum,
+            "skipped": skipped,
+        }
+
+    def _resolve_safe_roles(self, guild: discord.Guild, category: str, selected_keys: list[str]) -> tuple[list[discord.Role], list[str]]:
+        roles: list[discord.Role] = []
+        skipped: list[str] = []
+        seen: set[int] = set()
+        for key in selected_keys:
+            role = resolve_role(guild, key)
+            if not role:
+                skipped.append(f"{key}: cargo nao configurado")
+                continue
+            ok, reason = self._role_can_be_managed(guild, role)
+            if not ok:
+                skipped.append(f"{role.name}: {reason}")
+                continue
+            if role.id not in seen:
+                roles.append(role)
+                seen.add(role.id)
+        return roles, skipped
+
+    def _role_can_be_managed(self, guild: discord.Guild, role: discord.Role, strict: bool = True) -> tuple[bool, str]:
+        if role == guild.default_role:
+            return False, "cargo @everyone ignorado"
+        if role.managed:
+            return False, "cargo gerenciado por integracao"
+        bot_member = guild.me
+        if not bot_member:
+            return False, "bot nao encontrado no servidor"
+        if not bot_member.guild_permissions.manage_roles:
+            return False, "bot sem permissao Manage Roles"
+        if bot_member.top_role <= role:
+            return False, "cargo acima do cargo do bot"
+        return True, ""
+
+    async def _maybe_remove_visitor(self, interaction: discord.Interaction, minimum_ok: bool) -> discord.Role | None:
+        assert isinstance(interaction.user, discord.Member)
         visitor_role = await self._visitor_role(interaction)
-        visitor_removed = False
-        if visitor_role and visitor_role in interaction.user.roles:
-            await interaction.user.remove_roles(visitor_role, reason="DevVerse onboarding completed")
-            visitor_removed = True
-        await self._save_profile(interaction, selected_role_by_key, state)
-        await self._log_profile_completed(interaction, selected_roles, visitor_role if visitor_removed else None)
-        await interaction.response.send_message("Perfil atualizado com sucesso." + warning, ephemeral=True, delete_after=12)
+        if not visitor_role or visitor_role not in interaction.user.roles:
+            return None
+        if not minimum_ok:
+            return None
+        ok, reason = self._role_can_be_managed(interaction.guild, visitor_role) if interaction.guild else (False, "sem guild")
+        if not ok:
+            logger.warning("Visitante nao removido guild_id=%s user_id=%s motivo=%s", interaction.guild.id if interaction.guild else None, interaction.user.id, reason)
+            return None
+        await interaction.user.remove_roles(visitor_role, reason="DevVerse onboarding completed")
+        return visitor_role
+
+    def _minimum_profile_status_by_ids(self, guild: discord.Guild, role_ids: set[int]) -> tuple[bool, list[str]]:
+        profile_roles = self._role_ids_for_group(guild, "profile") & role_ids
+        level_roles = self._role_ids_for_group(guild, "level") & role_ids
+        specialty_roles = self._role_ids_for_group(guild, "specialties") & role_ids
+        language_roles = self._role_ids_for_group(guild, "languages") & role_ids
+        missing = []
+        if not profile_roles:
+            missing.append("perfil principal")
+        if len(level_roles) != 1:
+            missing.append("um nivel de estudo")
+        if not specialty_roles and not language_roles:
+            missing.append("uma especialidade ou linguagem")
+        return not missing, missing
+
+    def _role_ids_for_group(self, guild: discord.Guild, group_key: str) -> set[int]:
+        role_ids = set()
+        for key, _, _ in ONBOARDING_GROUPS[group_key]["options"]:
+            role = resolve_role(guild, key)
+            if role:
+                role_ids.add(role.id)
+        return role_ids
 
     async def _visitor_role(self, interaction: discord.Interaction) -> discord.Role | None:
         if not interaction.guild:
@@ -273,22 +418,52 @@ class ConfirmProfileButton(discord.ui.Button):
                 return role
         return None
 
-    async def _save_profile(self, interaction: discord.Interaction, selected_role_by_key: dict[str, discord.Role | None], state: OnboardingState) -> None:
-        await interaction.client.db.execute("DELETE FROM user_profiles WHERE user_id = ?", (interaction.user.id,))
-        for category, keys in state.selected.items():
-            for key in keys:
-                role = selected_role_by_key.get(key)
-                if role is None:
-                    continue
-                await interaction.client.db.execute(
-                    "INSERT INTO user_profiles (user_id, category, role_id) VALUES (?, ?, ?)",
-                    (interaction.user.id, category, role.id),
-                )
+    async def _save_category_profile(self, interaction: discord.Interaction, category: str, roles: list[discord.Role]) -> None:
+        if not interaction.guild:
+            return
+        db = interaction.client.db
+        if not db.conn:
+            raise RuntimeError("Banco de dados indisponivel")
+        await db.conn.execute(
+            "DELETE FROM user_profiles WHERE guild_id = ? AND user_id = ? AND category = ?",
+            (interaction.guild.id, interaction.user.id, category),
+        )
+        for role in roles:
+            await db.conn.execute(
+                """
+                INSERT OR IGNORE INTO user_profiles (guild_id, user_id, category, role_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (interaction.guild.id, interaction.user.id, category, role.id),
+            )
+        await db.conn.commit()
+
+    def _summary_message(self, result: dict[str, object]) -> str:
+        added = result["added_roles"]
+        removed = result["removed_roles"]
+        skipped = result["skipped"]
+        visitor_removed = result["visitor_removed"]
+        missing_minimum = result["missing_minimum"]
+        parts = ["✅ Perfil atualizado", ""]
+        parts.append("Adicionados:\n" + self._role_lines(added if isinstance(added, list) else []))
+        parts.append("Removidos:\n" + self._role_lines(removed if isinstance(removed, list) else []))
+        if visitor_removed:
+            parts.append(f"Visitante removido:\n• {visitor_removed.name}")
+        if missing_minimum:
+            parts.append("Perfil minimo ainda incompleto:\n" + "\n".join(f"• {item}" for item in missing_minimum))
+        if skipped:
+            parts.append("Alguns cargos nao foram aplicados:\n" + "\n".join(f"• {item}" for item in skipped[:8]))
+        parts.append("Voce pode voltar a este painel e alterar seus cargos quando quiser.")
+        return "\n\n".join(parts)
+
+    def _role_lines(self, roles: list[discord.Role]) -> str:
+        return "\n".join(f"• {role.name}" for role in roles) if roles else "• Nenhum"
 
     async def _log_profile_completed(
         self,
         interaction: discord.Interaction,
-        selected_roles: list[discord.Role],
+        added_roles: list[discord.Role],
+        removed_roles: list[discord.Role],
         removed_visitor: discord.Role | None,
     ) -> None:
         if not interaction.guild:
@@ -296,11 +471,12 @@ class ConfirmProfileButton(discord.ui.Button):
         channel = discord.utils.get(interaction.guild.text_channels, name="mod-logs")
         if not channel:
             return
-        roles = ", ".join(role.mention for role in selected_roles) or "Nenhum"
+        added = ", ".join(role.mention for role in added_roles) or "Nenhum"
+        removed_roles_text = ", ".join(role.mention for role in removed_roles) or "Nenhum"
         removed = removed_visitor.mention if removed_visitor else "Nao estava com Visitante"
         embed = discord.Embed(
-            title="Perfil concluido",
-            description=f"Usuario: {interaction.user.mention}\nCargos recebidos: {roles}\nCargo removido: {removed}",
+            title="Perfil atualizado",
+            description=f"Usuario: {interaction.user.mention}\nAdicionados: {added}\nRemovidos: {removed_roles_text}\nVisitante: {removed}",
             color=discord.Color.green(),
         )
         try:

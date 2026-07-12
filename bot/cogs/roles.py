@@ -26,12 +26,24 @@ class RolesCog(commands.Cog):
         self.bot.add_view(OnboardingView(PRIMARY_ONBOARDING_GROUPS))
         self.bot.add_view(OnboardingView(EXTRA_ONBOARDING_GROUPS))
         self.bot.add_view(OnboardingPanelView())
+        self.bot.add_view(RolePanelView(ROLE_PANEL_GROUPS))
 
     @app_commands.command(name="rolepanel", description="Cria o painel de autoatribuição de cargos.")
     @admin_check()
     async def rolepanel(self, interaction: discord.Interaction) -> None:
         embed = make_embed("Painel de Cargos", "Escolha suas especialidades, linguagens, frameworks, sistemas, objetivos e status.")
         await interaction.response.send_message(embed=embed, view=RolePanelView(ROLE_PANEL_GROUPS))
+
+    @app_commands.command(name="editar_perfil", description="Abre o painel para editar seus cargos e perfil.")
+    async def editar_perfil(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Use este comando dentro de um servidor.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            embed=self._onboarding_embed(),
+            view=OnboardingPanelView(),
+            ephemeral=True,
+        )
 
     @permissions_group.command(name="check", description="Mostra quais canais um usuario consegue ou nao consegue ver.")
     @admin_check()
@@ -299,7 +311,7 @@ class RolesCog(commands.Cog):
         for member in members:
             if member.bot:
                 continue
-            has_profile = await self.bot.db.fetchone("SELECT 1 FROM user_profiles WHERE user_id = ? LIMIT 1", (member.id,))
+            has_profile = await self.bot.db.fetchone("SELECT 1 FROM user_profiles WHERE guild_id = ? AND user_id = ? LIMIT 1", (member.guild.id, member.id))
             if has_profile or visitor_role in member.roles:
                 skipped += 1
                 continue
